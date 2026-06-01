@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+
+# Banco de dados local
+*.db
+*.sqlite
+*.sqlite3
+
+# Variáveis de ambiente — NUNCA commitar
+.env
+.env.local
+.env.*.local
+
+# IDE / SO
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log

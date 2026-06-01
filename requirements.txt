@@ -1,0 +1,32 @@
+# Dependências do backend Coach PAM.
+# Versões pinadas pra reproduzibilidade — quando atualizar, rodar:
+#   pip install --upgrade <pkg>
+#   pip freeze | grep -i <pkg>  # pega versão exata
+#   python -m pytest             # garante que nada quebrou
+
+# --- Framework web ---
+fastapi==0.122.0
+uvicorn[standard]==0.38.0
+
+# --- ORM ---
+sqlmodel==0.0.27
+sqlalchemy==2.0.44
+alembic==1.18.4
+
+# --- Driver Postgres (usado em produção no Render) ---
+psycopg2-binary==2.9.10
+
+# --- Auth ---
+python-jose[cryptography]==3.5.0
+passlib==1.7.4
+
+# --- Validation ---
+pydantic==2.12.5
+email-validator==2.3.0
+
+# --- Rate limiting ---
+slowapi==0.1.9
+
+# --- Testes ---
+pytest==9.0.3
+httpx==0.28.1
