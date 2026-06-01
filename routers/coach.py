@@ -213,6 +213,18 @@ def get_current_all_exercise_rms(
     for r in rows:
         if r.exercise_id not in latest:
             latest[r.exercise_id] = r.rm_value
+
+    # Movimentos que puxam o RM de outro herdam o valor do referenciado.
+    pulling = session.exec(
+        select(Exercise).where(
+            Exercise.is_active == True,
+            Exercise.rm_source_exercise_id != None,  # noqa: E711
+        )
+    ).all()
+    for e in pulling:
+        ref = latest.get(e.rm_source_exercise_id)
+        if ref is not None:
+            latest[e.id] = ref
     return latest
 
 
@@ -281,18 +293,26 @@ def coach_get_athlete_exercise_rms(
     ).all()
 
     latest_map = {r.exercise_id: r for r in latest_rows}
+    own_value = {eid: r.rm_value for eid, r in latest_map.items()}
 
     out: List[ExerciseRMCurrentItem] = []
     for e in exs:
         row = latest_map.get(e.id)
+        # Se o movimento puxa o RM de outro, usa o valor do referenciado.
+        if e.rm_source_exercise_id:
+            rm_value = own_value.get(e.rm_source_exercise_id)
+            eff = None
+        else:
+            rm_value = row.rm_value if row else None
+            eff = row.effective_date if row else None
         out.append(
             ExerciseRMCurrentItem(
                 exercise_id=e.id,
                 exercise_name=e.name,
                 category_id=e.category_id,
                 type=e.type,
-                rm_value=row.rm_value if row else None,
-                effective_date=row.effective_date if row else None,
+                rm_value=rm_value,
+                effective_date=eff,
             )
         )
 

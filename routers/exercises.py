@@ -34,6 +34,8 @@ class ExerciseCreate(SQLModel):
     category_id: int
     name: str
     rm_source_default: Optional[str] = None
+    # null = RM próprio; senão, puxa o RM de outro movimento (id do exercício).
+    rm_source_exercise_id: Optional[int] = None
     allow_weight_default: bool = True
 
 
@@ -41,6 +43,7 @@ class ExercisePatch(SQLModel):
     name: Optional[str] = None
     category_id: Optional[int] = None
     rm_source_default: Optional[str] = None
+    rm_source_exercise_id: Optional[int] = None
     allow_weight_default: Optional[bool] = None
     is_active: Optional[bool] = None
 
@@ -56,6 +59,7 @@ class ExerciseRead(SQLModel):
     id: int
     name: str
     rm_source_default: Optional[str] = None
+    rm_source_exercise_id: Optional[int] = None
     allow_weight_default: bool = True
     is_active: bool = True
     coach_id: Optional[int] = None
@@ -106,6 +110,7 @@ def _build_category_tree(
                 id=e.id,
                 name=e.name,
                 rm_source_default=e.rm_source_default,
+                rm_source_exercise_id=e.rm_source_exercise_id,
                 allow_weight_default=e.allow_weight_default,
                 is_active=e.is_active,
                 coach_id=e.coach_id,
@@ -127,6 +132,31 @@ def _build_category_tree(
 
     sort_tree(roots)
     return roots
+
+
+def _validate_rm_source_exercise(
+    session: Session,
+    coach: User,
+    rm_source_exercise_id: Optional[int],
+    self_id: Optional[int] = None,
+) -> None:
+    """Garante que o movimento referenciado existe, é acessível e não é ele mesmo."""
+    if rm_source_exercise_id is None:
+        return
+    if self_id is not None and rm_source_exercise_id == self_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Um movimento não pode puxar o RM de si mesmo.",
+        )
+    ref = session.get(Exercise, rm_source_exercise_id)
+    if not ref or not ref.is_active:
+        raise HTTPException(
+            status_code=404, detail="Movimento de referência não encontrado."
+        )
+    if ref.coach_id is not None and ref.coach_id != coach.id:
+        raise HTTPException(
+            status_code=403, detail="Sem acesso ao movimento de referência."
+        )
 
 
 # ---------- Routes ----------
@@ -258,6 +288,12 @@ def coach_create_exercise(
     if cat.coach_id is not None and cat.coach_id != coach.id:
         raise HTTPException(status_code=403, detail="Você não pode usar essa categoria.")
 
+    # RM puxado de outro movimento só faz sentido para LPO.
+    rm_source_exercise_id = (
+        payload.rm_source_exercise_id if cat.type == "lpo" else None
+    )
+    _validate_rm_source_exercise(session, coach, rm_source_exercise_id)
+
     now = datetime.now(timezone.utc)
 
     ex = Exercise(
@@ -266,6 +302,7 @@ def coach_create_exercise(
         name=name,
         type=cat.type,
         rm_source_default=payload.rm_source_default if cat.type == "lpo" else None,
+        rm_source_exercise_id=rm_source_exercise_id,
         allow_weight_default=payload.allow_weight_default,
         is_active=True,
         created_at=now,
@@ -280,6 +317,7 @@ def coach_create_exercise(
         id=ex.id,
         name=ex.name,
         rm_source_default=ex.rm_source_default,
+        rm_source_exercise_id=ex.rm_source_exercise_id,
         allow_weight_default=ex.allow_weight_default,
         is_active=ex.is_active,
         coach_id=ex.coach_id,
@@ -319,6 +357,12 @@ def coach_patch_exercise(
     if "rm_source_default" in data:
         ex.rm_source_default = data["rm_source_default"]
 
+    if "rm_source_exercise_id" in data:
+        _validate_rm_source_exercise(
+            session, coach, data["rm_source_exercise_id"], self_id=ex.id
+        )
+        ex.rm_source_exercise_id = data["rm_source_exercise_id"]
+
     if "allow_weight_default" in data:
         ex.allow_weight_default = bool(data["allow_weight_default"])
 
@@ -335,6 +379,7 @@ def coach_patch_exercise(
         id=ex.id,
         name=ex.name,
         rm_source_default=ex.rm_source_default,
+        rm_source_exercise_id=ex.rm_source_exercise_id,
         allow_weight_default=ex.allow_weight_default,
         is_active=ex.is_active,
         coach_id=ex.coach_id,

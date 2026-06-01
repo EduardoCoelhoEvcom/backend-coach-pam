@@ -2,6 +2,7 @@
 
 Importado por security, routers e main.
 """
+from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine
 
 from config import DATABASE_URL
@@ -21,6 +22,31 @@ def get_session():
         yield session
 
 
+def _ensure_columns() -> None:
+    """Adiciona colunas novas a tabelas já existentes.
+
+    `create_all` cria tabelas que faltam, mas NUNCA faz ALTER em tabelas
+    existentes. Como o deploy do Render não roda Alembic, garantimos aqui,
+    de forma idempotente, as colunas adicionadas depois da criação da tabela.
+    """
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("exercise"):
+            return
+        cols = {c["name"] for c in insp.get_columns("exercise")}
+        if "rm_source_exercise_id" not in cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE exercise "
+                        "ADD COLUMN rm_source_exercise_id INTEGER"
+                    )
+                )
+    except Exception as exc:  # noqa: BLE001 — não derruba o startup por isso
+        print(f"[db] _ensure_columns falhou (ignorado): {exc}")
+
+
 def create_db_and_tables() -> None:
     """Cria todas as tabelas registradas em SQLModel.metadata."""
     SQLModel.metadata.create_all(engine)
+    _ensure_columns()

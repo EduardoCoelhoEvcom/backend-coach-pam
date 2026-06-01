@@ -55,6 +55,15 @@ class Exercise(SQLModel, table=True):
     name: str
     type: str  # "lpo" | "accessory"
     rm_source_default: Optional[str] = None
+
+    # Quando definido, este movimento "puxa" o RM de outro movimento.
+    # null = usa o RM próprio (registrado para este exercise_id).
+    rm_source_exercise_id: Optional[int] = Field(
+        default=None,
+        foreign_key="exercise.id",
+        index=True,
+    )
+
     allow_weight_default: bool = True
     is_active: bool = True
 
