@@ -163,8 +163,12 @@ def seed_global_library(session: Session) -> None:
     _add_exercises(session, coach_id=None, category_id=snatch_cat.id, ex_type="lpo", rm_source_default="snatch",      names=["Snatch"])
     _add_exercises(session, coach_id=None, category_id=clean_cat.id,  ex_type="lpo", rm_source_default="clean_jerk",  names=["Clean"])
     _add_exercises(session, coach_id=None, category_id=cj_cat.id,     ex_type="lpo", rm_source_default="clean_jerk",  names=["Clean and Jerk"])
+    # Split Jerk tem RM próprio (não puxa do Clean and Jerk).
+    _add_exercises(session, coach_id=None, category_id=jerk_cat.id,   ex_type="lpo", rm_source_default=None,          names=[
+        "Split Jerk",
+    ])
     _add_exercises(session, coach_id=None, category_id=jerk_cat.id,   ex_type="lpo", rm_source_default="clean_jerk",  names=[
-        "Split Jerk", "Push Jerk", "Push Jerk (Back Rack)", "Split Jerk (Back Rack)",
+        "Push Jerk", "Push Jerk (Back Rack)", "Split Jerk (Back Rack)",
     ])
 
     # ----- Exercícios (Acessórios de LPO) -----
