@@ -221,8 +221,37 @@ def seed_default_users(session: Session) -> None:
     session.commit()
 
 
+def fix_split_jerk_rm_source(session: Session) -> None:
+    """Garante que o 'Split Jerk' global use RM próprio (não puxa do Clean and Jerk).
+
+    Roda em TODO startup (idempotente). Conserta bancos antigos onde o Split Jerk
+    foi semeado com rm_source_default='clean_jerk'. Não precisa de script manual.
+    """
+    rows = session.exec(
+        select(Exercise).where(
+            Exercise.name == "Split Jerk",
+            Exercise.coach_id == None,  # noqa: E711  (só o global)
+        )
+    ).all()
+
+    changed = False
+    for ex in rows:
+        if ex.rm_source_default is not None:
+            ex.rm_source_default = None
+            session.add(ex)
+            changed = True
+        if hasattr(ex, "rm_source_exercise_id") and ex.rm_source_exercise_id is not None:
+            ex.rm_source_exercise_id = None
+            session.add(ex)
+            changed = True
+
+    if changed:
+        session.commit()
+
+
 def run_initial_seed() -> None:
     """Executa o seed completo numa sessão própria. Chamado no startup."""
     with Session(engine) as session:
         seed_global_library(session)
         seed_default_users(session)
+        fix_split_jerk_rm_source(session)
