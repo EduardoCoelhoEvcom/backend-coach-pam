@@ -1,6 +1,8 @@
 """Rotas de autenticação: register, login, /me, /me/export, DELETE /me."""
 import logging
+import os
 from datetime import date, timedelta
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -38,6 +40,7 @@ class UserCreate(SQLModel):
     email: EmailStr  # validação automática de formato de email
     password: str
     role: str
+    coach_code: Optional[str] = None  # exigido só quando role == "coach"
 
 
 class TokenResponse(SQLModel):
@@ -94,18 +97,23 @@ def register(
             detail="Email já cadastrado",
         )
 
+    # Role final: athlete por padrão. Coach só com o código correto.
+    final_role = "athlete"
     if role_raw == "coach":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Registro de coach está desabilitado. "
-                   "Peça para a administração criar sua conta.",
-        )
+        expected_code = (os.environ.get("COACH_REGISTER_CODE") or "ADMIN").strip()
+        provided_code = (user_in.coach_code or "").strip()
+        if provided_code != expected_code:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Código de coach inválido.",
+            )
+        final_role = "coach"
 
     user = User(
         name=name,
         email=email,
         password_hash=get_password_hash(password),
-        role="athlete",
+        role=final_role,
         status_pagamento="ok",
         vencimento=date.today() + timedelta(days=30),
     )
