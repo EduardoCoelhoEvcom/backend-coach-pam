@@ -208,15 +208,8 @@ def seed_default_users(session: Session) -> None:
             vencimento=date.today() + timedelta(days=30),
         ))
 
-    if not get_user_by_email("atleta@pam.com", session):
-        session.add(User(
-            name="Aluno",
-            email="atleta@pam.com",
-            password_hash=get_password_hash("123456"),
-            role="athlete",
-            status_pagamento="ok",
-            vencimento=date.today() + timedelta(days=30),
-        ))
+    # Atleta demo removido: em produção os atletas são criados pela coach
+    # (POST /coach/athletes) ou se cadastram via /auth/register.
 
     session.commit()
 
