@@ -19,6 +19,9 @@ class User(SQLModel, table=True):
     status_pagamento: str = "ok"
     vencimento: Optional[date] = None
     created_at: datetime = Field(default_factory=_utc_now)
+    # True quando a senha atual é temporária (gerada no "esqueci a senha").
+    # O app força a troca no próximo login enquanto isto estiver True.
+    must_change_password: bool = Field(default=False)
 
 
 def get_user_by_email(email: str, session: Session) -> Optional[User]:

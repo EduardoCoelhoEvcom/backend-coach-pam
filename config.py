@@ -54,3 +54,16 @@ if _cors_raw == "*":
     CORS_ORIGINS: list[str] = ["*"]
 else:
     CORS_ORIGINS = [o.strip() for o in _cors_raw.split(",") if o.strip()]
+
+# ---- E-mail (SMTP) ----
+# Usado para notificar o admin quando alguém esquece a senha.
+# Em produção, defina essas variáveis no Render. Com Gmail, crie uma
+# "Senha de app" (App Password) e use ela em SMTP_PASSWORD.
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+# Para quem vão os alertas (ex.: aviso de senha esquecida).
+ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "eduardocoelho12y@gmail.com")
+# Remetente; por padrão usa o próprio SMTP_USER.
+ALERT_EMAIL_FROM = os.getenv("ALERT_EMAIL_FROM", "") or SMTP_USER

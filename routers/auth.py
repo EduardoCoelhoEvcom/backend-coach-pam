@@ -1,6 +1,7 @@
 """Rotas de autenticação: register, login, /me, /me/export, DELETE /me."""
 import logging
 import os
+import secrets
 from datetime import date, timedelta
 from typing import Optional
 
@@ -9,8 +10,9 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import EmailStr
 from sqlmodel import Session, SQLModel, select
 
-from config import ACCESS_TOKEN_EXPIRE_MINUTES
+from config import ACCESS_TOKEN_EXPIRE_MINUTES, ALERT_EMAIL_TO
 from db import get_session
+from services.email import send_email
 from models import (
     AthleteExerciseRMHistory,
     TrainingDayCompletion,
@@ -50,6 +52,7 @@ class TokenResponse(SQLModel):
     expires_in: int  # segundos até o access expirar
     name: str
     role: str
+    must_change_password: bool = False  # True = app deve forçar troca de senha
 
 
 class RefreshRequest(SQLModel):
@@ -66,6 +69,14 @@ class RefreshResponse(SQLModel):
 
 class LogoutRequest(SQLModel):
     refresh_token: str
+
+
+class ForgotPasswordRequest(SQLModel):
+    email: EmailStr
+
+
+class SimpleMessageResponse(SQLModel):
+    message: str
 
 
 # ---------- Routes ----------
@@ -133,6 +144,7 @@ def register(
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         name=user.name,
         role=user.role,
+        must_change_password=user.must_change_password,
     )
 
 
@@ -161,7 +173,101 @@ def login(
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         name=user.name,
         role=user.role,
+        must_change_password=user.must_change_password,
     )
+
+
+class ChangePasswordRequest(SQLModel):
+    new_password: str
+
+
+@router.post("/auth/change-password", response_model=SimpleMessageResponse)
+def change_password(
+    body: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Troca a senha do usuário logado e desliga o flag must_change_password.
+
+    Usado tanto quando a pessoa entra com a senha temporária (e o app força a
+    troca) quanto numa troca normal de senha.
+    """
+    new_pw = body.new_password or ""
+    if len(new_pw) < 6:
+        raise HTTPException(
+            status_code=400,
+            detail="Senha precisa ter pelo menos 6 caracteres.",
+        )
+
+    current_user.password_hash = get_password_hash(new_pw)
+    current_user.must_change_password = False
+    session.add(current_user)
+    session.commit()
+
+    return SimpleMessageResponse(message="Senha alterada com sucesso.")
+
+
+def _generate_temp_password(length: int = 8) -> str:
+    """Senha temporária legível: letras (sem ambíguas) + dígitos."""
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+@router.post("/auth/forgot-password", response_model=SimpleMessageResponse)
+@limiter.limit("5/hour")  # evita abuso/DoS no reset
+def forgot_password(
+    request: Request,
+    body: ForgotPasswordRequest,
+    session: Session = Depends(get_session),
+):
+    """Fluxo de senha esquecida (com admin no meio).
+
+    Gera uma senha temporária NOVA, troca a senha do usuário por ela e envia
+    um e-mail para o admin (ALERT_EMAIL_TO) com nome + e-mail + senha temporária.
+    O admin entra em contato e repassa a senha. A senha antiga é irreversível
+    (hash), por isso é gerada uma nova.
+
+    Resposta sempre genérica (não revela se o e-mail existe).
+    """
+    email = (body.email or "").strip().lower()
+    user = get_user_by_email(email, session)
+
+    generic = SimpleMessageResponse(
+        message="Se este e-mail estiver cadastrado, o responsável foi avisado "
+                "e vai entrar em contato para repassar uma nova senha."
+    )
+
+    if not user:
+        return generic
+
+    temp_password = _generate_temp_password()
+    user.password_hash = get_password_hash(temp_password)
+    user.must_change_password = True  # app força troca no próximo login
+    session.add(user)
+    # Invalida sessões antigas: a pessoa terá que entrar com a senha nova.
+    try:
+        revoke_all_user_tokens(user, session)
+    except Exception:  # noqa: BLE001
+        pass
+    session.commit()
+
+    send_email(
+        to=ALERT_EMAIL_TO,
+        subject=f"[Coach PAM] Senha esquecida — {user.name}",
+        body=(
+            "Alguém pediu recuperação de senha no Coach PAM.\n\n"
+            f"Nome: {user.name}\n"
+            f"E-mail: {user.email}\n"
+            f"Perfil: {user.role}\n\n"
+            f"Senha temporária gerada: {temp_password}\n\n"
+            "Entre em contato com a pessoa e repasse essa senha. "
+            "Recomende que ela troque a senha depois de entrar.\n\n"
+            "Obs.: a senha anterior não pode ser recuperada (fica criptografada). "
+            "Por isso uma nova foi gerada."
+        ),
+    )
+
+    return generic
 
 
 @router.post("/auth/refresh", response_model=RefreshResponse)

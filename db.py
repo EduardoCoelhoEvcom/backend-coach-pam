@@ -31,17 +31,29 @@ def _ensure_columns() -> None:
     """
     try:
         insp = inspect(engine)
-        if not insp.has_table("exercise"):
-            return
-        cols = {c["name"] for c in insp.get_columns("exercise")}
-        if "rm_source_exercise_id" not in cols:
-            with engine.begin() as conn:
-                conn.execute(
-                    text(
-                        "ALTER TABLE exercise "
-                        "ADD COLUMN rm_source_exercise_id INTEGER"
+        if insp.has_table("exercise"):
+            cols = {c["name"] for c in insp.get_columns("exercise")}
+            if "rm_source_exercise_id" not in cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE exercise "
+                            "ADD COLUMN rm_source_exercise_id INTEGER"
+                        )
                     )
-                )
+
+        # "user" é palavra reservada no Postgres → precisa de aspas.
+        if insp.has_table("user"):
+            user_cols = {c["name"] for c in insp.get_columns("user")}
+            if "must_change_password" not in user_cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            'ALTER TABLE "user" '
+                            "ADD COLUMN must_change_password BOOLEAN "
+                            "NOT NULL DEFAULT FALSE"
+                        )
+                    )
     except Exception as exc:  # noqa: BLE001 — não derruba o startup por isso
         print(f"[db] _ensure_columns falhou (ignorado): {exc}")
 
