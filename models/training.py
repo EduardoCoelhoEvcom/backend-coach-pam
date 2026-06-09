@@ -65,6 +65,12 @@ class TrainingSetExecution(SQLModel, table=True):
     used_kg: Optional[float] = None
     diff_kg: Optional[float] = None
 
+    # Status por série marcado pelo atleta: "fez" | "errou" | "nao_fez".
+    # None = série antiga (antes do recurso) ou ainda não marcada.
+    status: Optional[str] = None
+    # Observação opcional do atleta sobre a série (ex.: "perdi na 3ª rep").
+    note: Optional[str] = None
+
     created_at: datetime = Field(default_factory=_utc_now)
     updated_at: datetime = Field(default_factory=_utc_now)
 

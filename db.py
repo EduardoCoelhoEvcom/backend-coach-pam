@@ -54,6 +54,28 @@ def _ensure_columns() -> None:
                             "NOT NULL DEFAULT FALSE"
                         )
                     )
+
+        # Status + observação por série (recurso de check-in por série).
+        if insp.has_table("trainingsetexecution"):
+            tse_cols = {
+                c["name"] for c in insp.get_columns("trainingsetexecution")
+            }
+            if "status" not in tse_cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE trainingsetexecution "
+                            "ADD COLUMN status VARCHAR"
+                        )
+                    )
+            if "note" not in tse_cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE trainingsetexecution "
+                            "ADD COLUMN note VARCHAR"
+                        )
+                    )
     except Exception as exc:  # noqa: BLE001 — não derruba o startup por isso
         print(f"[db] _ensure_columns falhou (ignorado): {exc}")
 

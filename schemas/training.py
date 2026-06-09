@@ -79,6 +79,10 @@ class SetExecutionIn(SQLModel):
     prescribed_percent: Optional[float] = None
     prescribed_kg: Optional[float] = None
     used_kg: Optional[float] = None
+    # Status marcado pelo atleta na série: "fez" | "errou" | "nao_fez" | None.
+    status: Optional[str] = None
+    # Observação opcional do atleta sobre a série.
+    note: Optional[str] = None
 
     # Campo em branco / texto / vírgula não derruba mais o salvar do treino.
     @field_validator(
@@ -102,6 +106,8 @@ class SetExecutionOut(SQLModel):
     prescribed_kg: Optional[float] = None
     used_kg: Optional[float] = None
     diff_kg: Optional[float] = None
+    status: Optional[str] = None
+    note: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

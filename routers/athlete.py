@@ -420,6 +420,8 @@ def save_day_execution(
             prescribed_kg=s.prescribed_kg,
             used_kg=s.used_kg,
             diff_kg=diff,
+            status=s.status,
+            note=s.note,
             created_at=now,
             updated_at=now,
         )
@@ -495,6 +497,8 @@ async def complete_day(
                 prescribed_kg=s.prescribed_kg,
                 used_kg=s.used_kg,
                 diff_kg=diff,
+                status=s.status,
+                note=s.note,
                 created_at=now,
                 updated_at=now,
             )
