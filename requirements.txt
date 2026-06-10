@@ -30,6 +30,9 @@ python-multipart==0.0.20
 # --- Rate limiting ---
 slowapi==0.1.9
 
+# --- Leitura de planilhas Excel (importação de planilhas da coach) ---
+openpyxl==3.1.5
+
 # --- Testes ---
 pytest==9.0.3
 httpx==0.28.1

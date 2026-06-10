@@ -44,6 +44,7 @@ from routers import (
     athlete as athlete_router,
     auth as auth_router,
     coach as coach_router,
+    coach_import as coach_import_router,
     exercises as exercises_router,
 )
 from services.seeding import run_initial_seed
@@ -84,6 +85,7 @@ app.add_middleware(
 app.include_router(auth_router.router)
 app.include_router(exercises_router.router)
 app.include_router(coach_router.router)
+app.include_router(coach_import_router.router)
 app.include_router(athlete_router.router)
 
 
