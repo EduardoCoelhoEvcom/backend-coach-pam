@@ -131,6 +131,11 @@ def import_apply(
     athlete = session.get(User, body.athlete_id)
     if not athlete or athlete.role != "athlete":
         raise HTTPException(status_code=400, detail="Atleta inválido.")
+    if athlete.coach_id != current_coach.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Este atleta não pertence a você.",
+        )
 
     weeks = int(body.weeks or 1)
     if weeks < 1:

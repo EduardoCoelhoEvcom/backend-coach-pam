@@ -53,6 +53,22 @@ from services.training_plan import (
 router = APIRouter(tags=["coach"])
 
 
+def _owned_athlete_or_error(session: Session, coach: User, athlete_id: int) -> User:
+    """Retorna o atleta SE ele pertencer a este coach. Senão, 404/403.
+
+    Isola os dados por coach: um coach só acessa os próprios atletas.
+    """
+    athlete = session.get(User, athlete_id)
+    if not athlete or athlete.role != "athlete":
+        raise HTTPException(status_code=404, detail="Atleta não encontrado.")
+    if athlete.coach_id != coach.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Este atleta não pertence a você.",
+        )
+    return athlete
+
+
 # ---------- Schemas locais ----------
 class CoachDashboardResponse(SQLModel):
     athletes_total: int
@@ -90,7 +106,10 @@ def list_athletes(
     session: Session = Depends(get_session),
     coach: User = Depends(require_role("coach")),
 ):
-    stmt = select(User).where(User.role == "athlete")
+    stmt = select(User).where(
+        User.role == "athlete",
+        User.coach_id == coach.id,
+    )
     return session.exec(stmt).all()
 
 
@@ -134,9 +153,7 @@ def coach_set_exercise_rm(
     session: Session = Depends(get_session),
     coach: User = Depends(require_role("coach")),
 ):
-    athlete = session.get(User, athlete_id)
-    if not athlete or athlete.role != "athlete":
-        raise HTTPException(status_code=404, detail="Atleta não encontrado.")
+    _owned_athlete_or_error(session, coach, athlete_id)
 
     ex = session.get(Exercise, body.exercise_id)
     if not ex or not ex.is_active:
@@ -186,6 +203,7 @@ def get_current_exercise_rm(
     session: Session = Depends(get_session),
     coach: User = Depends(require_role("coach")),
 ):
+    _owned_athlete_or_error(session, coach, athlete_id)
     stmt = (
         select(AthleteExerciseRMHistory)
         .where(AthleteExerciseRMHistory.athlete_id == athlete_id)
@@ -203,6 +221,7 @@ def get_current_all_exercise_rms(
     session: Session = Depends(get_session),
     coach: User = Depends(require_role("coach")),
 ):
+    _owned_athlete_or_error(session, coach, athlete_id)
     stmt = (
         select(AthleteExerciseRMHistory)
         .where(AthleteExerciseRMHistory.athlete_id == athlete_id)
@@ -236,6 +255,7 @@ def get_exercise_rm_history(
     session: Session = Depends(get_session),
     coach: User = Depends(require_role("coach")),
 ):
+    _owned_athlete_or_error(session, coach, athlete_id)
     stmt = (
         select(AthleteExerciseRMHistory)
         .where(AthleteExerciseRMHistory.athlete_id == athlete_id)
@@ -255,9 +275,7 @@ def coach_get_athlete_exercise_rms(
     session: Session = Depends(get_session),
     coach: User = Depends(require_role("coach")),
 ):
-    athlete = session.get(User, athlete_id)
-    if not athlete or athlete.role != "athlete":
-        raise HTTPException(status_code=404, detail="Atleta não encontrado.")
+    _owned_athlete_or_error(session, coach, athlete_id)
 
     exs = session.exec(
         select(Exercise)
@@ -395,9 +413,7 @@ def create_training_sheet(
     current_coach: User = Depends(require_role("coach")),
     session: Session = Depends(get_session),
 ):
-    athlete = session.get(User, payload.athlete_id)
-    if not athlete or athlete.role != "athlete":
-        raise HTTPException(status_code=400, detail="Atleta inválido")
+    _owned_athlete_or_error(session, current_coach, payload.athlete_id)
 
     start = payload.start_date
     if not start:
@@ -577,9 +593,9 @@ def duplicate_training_sheet(
             detail="Você não tem acesso a esta planilha.",
         )
 
-    target_athlete = session.get(User, payload.target_athlete_id)
-    if not target_athlete or target_athlete.role != "athlete":
-        raise HTTPException(status_code=400, detail="Atleta de destino inválido.")
+    target_athlete = _owned_athlete_or_error(
+        session, current_coach, payload.target_athlete_id
+    )
 
     raw_plan = original.plan
     if isinstance(raw_plan, str):
