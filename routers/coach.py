@@ -115,6 +115,7 @@ def create_athlete_for_coach(
         role="athlete",
         status_pagamento="ok",
         vencimento=date.today() + timedelta(days=30),
+        coach_id=current_coach.id,
     )
     session.add(user)
     session.commit()

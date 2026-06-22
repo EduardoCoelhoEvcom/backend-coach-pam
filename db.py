@@ -54,6 +54,11 @@ def _ensure_columns() -> None:
                             "NOT NULL DEFAULT FALSE"
                         )
                     )
+            if "coach_id" not in user_cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text('ALTER TABLE "user" ADD COLUMN coach_id INTEGER')
+                    )
 
         # Status + observação por série (recurso de check-in por série).
         if insp.has_table("trainingsetexecution"):

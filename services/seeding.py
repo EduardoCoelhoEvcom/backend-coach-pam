@@ -8,6 +8,7 @@ já existe, não duplica nada.
                            se ainda não existirem (úteis pra dev/demo).
   - run_initial_seed     → orquestra os dois acima dentro de uma sessão.
 """
+import os
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
@@ -214,6 +215,51 @@ def seed_default_users(session: Session) -> None:
     session.commit()
 
 
+def seed_admin_from_env(session: Session) -> None:
+    """Cria o usuário admin a partir das variáveis de ambiente, se definidas.
+
+    Defina ADMIN_EMAIL e ADMIN_PASSWORD (ex.: no Render). Se ambos existirem e
+    a conta ainda não existir, cria com role='admin'. A senha NÃO fica no
+    código — só no ambiente. Idempotente: não recria nem sobrescreve.
+    """
+    email = (os.getenv("ADMIN_EMAIL") or "").strip().lower()
+    password = os.getenv("ADMIN_PASSWORD") or ""
+    if not email or not password:
+        return
+    if get_user_by_email(email, session):
+        return
+    session.add(User(
+        name=os.getenv("ADMIN_NAME", "Admin"),
+        email=email,
+        password_hash=get_password_hash(password),
+        role="admin",
+        status_pagamento="ok",
+        vencimento=date.today() + timedelta(days=3650),
+    ))
+    session.commit()
+
+
+def backfill_athlete_coach(session: Session) -> None:
+    """Atletas sem coach_id passam a pertencer ao coach@pam.com (coach único atual).
+
+    Roda em todo startup (idempotente): só preenche onde coach_id está nulo.
+    Quando houver vários coaches, novos atletas já nascem com o coach certo.
+    """
+    coach = get_user_by_email("coach@pam.com", session)
+    if not coach:
+        return
+    orphans = session.exec(
+        select(User).where(User.role == "athlete", User.coach_id == None)  # noqa: E711
+    ).all()
+    changed = False
+    for a in orphans:
+        a.coach_id = coach.id
+        session.add(a)
+        changed = True
+    if changed:
+        session.commit()
+
+
 def fix_split_jerk_rm_source(session: Session) -> None:
     """Garante que o 'Split Jerk' global use RM próprio (não puxa do Clean and Jerk).
 
@@ -247,4 +293,6 @@ def run_initial_seed() -> None:
     with Session(engine) as session:
         seed_global_library(session)
         seed_default_users(session)
+        seed_admin_from_env(session)
+        backfill_athlete_coach(session)
         fix_split_jerk_rm_source(session)

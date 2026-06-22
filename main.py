@@ -41,6 +41,7 @@ from db import create_db_and_tables, get_session
 from logging_config import setup_logging
 from rate_limit import limiter
 from routers import (
+    admin as admin_router,
     athlete as athlete_router,
     auth as auth_router,
     coach as coach_router,
@@ -86,6 +87,7 @@ app.include_router(auth_router.router)
 app.include_router(exercises_router.router)
 app.include_router(coach_router.router)
 app.include_router(coach_import_router.router)
+app.include_router(admin_router.router)
 app.include_router(athlete_router.router)
 
 
