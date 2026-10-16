@@ -98,12 +98,15 @@ def client(_override_get_session) -> Generator[TestClient, None, None]:
 # ============================================================
 # Usuários de teste
 # ============================================================
-def _make_user(session: Session, *, name: str, email: str, role: str) -> User:
+def _make_user(
+    session: Session, *, name: str, email: str, role: str, coach_id=None
+) -> User:
     user = User(
         name=name,
         email=email,
         password_hash=get_password_hash("test123"),
         role=role,
+        coach_id=coach_id,
     )
     session.add(user)
     session.commit()
@@ -117,8 +120,12 @@ def coach_user(session) -> User:
 
 
 @pytest.fixture()
-def athlete_user(session) -> User:
-    return _make_user(session, name="Atleta Test", email="atleta@test.com", role="athlete")
+def athlete_user(session, coach_user) -> User:
+    # Atleta pertence ao coach de teste (cada coach só acessa os próprios atletas).
+    return _make_user(
+        session, name="Atleta Test", email="atleta@test.com",
+        role="athlete", coach_id=coach_user.id,
+    )
 
 
 def _token_for(user: User) -> str:

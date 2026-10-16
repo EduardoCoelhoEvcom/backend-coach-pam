@@ -90,7 +90,33 @@ def test_coach_create_sheet_rejects_invalid_athlete(coach_client):
             "start_date": str(date.today()),
         },
     )
-    assert res.status_code == 400
+    assert res.status_code == 404
+
+
+def test_coach_cannot_use_other_coachs_athlete(coach_client, session):
+    """Isolamento: atleta de outro coach -> 403."""
+    from models import User
+    from security import get_password_hash
+
+    other_coach = User(name="Outro Coach", email="oc@test.com",
+                       password_hash=get_password_hash("x123456"), role="coach")
+    session.add(other_coach)
+    session.commit()
+    session.refresh(other_coach)
+    foreign = User(name="Alheio", email="alheio@test.com",
+                   password_hash=get_password_hash("x123456"), role="athlete",
+                   coach_id=other_coach.id)
+    session.add(foreign)
+    session.commit()
+    session.refresh(foreign)
+
+    assert foreign.id not in [a["id"] for a in coach_client.get("/coach/athletes").json()]
+    res = coach_client.post(
+        "/coach/training-sheets",
+        json={"athlete_id": foreign.id, "title": "X", "weeks": 4,
+              "same_weeks": True, "start_date": str(date.today())},
+    )
+    assert res.status_code == 403
 
 
 def test_coach_lists_only_own_sheets(coach_client, athlete_user):

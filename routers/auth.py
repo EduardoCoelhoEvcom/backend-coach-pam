@@ -120,6 +120,18 @@ def register(
             )
         final_role = "coach"
 
+    # Atleta que se cadastra sozinho fica vinculado ao coach padrão
+    # (DEFAULT_COACH_EMAIL, ou coach@pam.com). Sem isso ele não apareceria
+    # para nenhum coach, já que cada coach só vê os próprios atletas.
+    coach_id = None
+    if final_role == "athlete":
+        default_coach_email = (
+            os.environ.get("DEFAULT_COACH_EMAIL") or "coach@pam.com"
+        ).strip().lower()
+        default_coach = get_user_by_email(default_coach_email, session)
+        if default_coach and default_coach.role == "coach":
+            coach_id = default_coach.id
+
     user = User(
         name=name,
         email=email,
@@ -127,6 +139,7 @@ def register(
         role=final_role,
         status_pagamento="ok",
         vencimento=date.today() + timedelta(days=30),
+        coach_id=coach_id,
     )
     session.add(user)
     session.commit()

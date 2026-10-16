@@ -193,6 +193,42 @@ def seed_global_library(session: Session) -> None:
     )
 
 
+def ensure_extra_lifts(session: Session) -> None:
+    """Garante variações de levantamento usadas nas planilhas da coach.
+
+    Roda em TODO startup e é idempotente (_add_exercises pula nomes que já
+    existem na categoria). Cada movimento usa o próprio RM.
+    """
+    tech_cat = _get_or_create_category(
+        session, coach_id=None, type="lpo", name="Técnicos",
+        parent_id=None, sort_order=20,
+    )
+    lpo_acc_cat = _get_or_create_category(
+        session, coach_id=None, type="lpo", name="Acessórios de LPO",
+        parent_id=None, sort_order=30,
+    )
+    snatch_cat = _get_or_create_category(
+        session, coach_id=None, type="lpo", name="Snatch",
+        parent_id=tech_cat.id, sort_order=1,
+    )
+    clean_cat = _get_or_create_category(
+        session, coach_id=None, type="lpo", name="Clean",
+        parent_id=tech_cat.id, sort_order=2,
+    )
+
+    _add_exercises(session, coach_id=None, category_id=snatch_cat.id, ex_type="lpo", names=[
+        "Squat Snatch", "Power Snatch", "Hang Squat Snatch", "Hang Power Snatch",
+        "High Hang Power Snatch",
+    ])
+    _add_exercises(session, coach_id=None, category_id=clean_cat.id, ex_type="lpo", names=[
+        "Squat Clean", "Power Clean", "Hang Squat Clean", "Hang Power Clean",
+        "High Hang Power Clean",
+    ])
+    _add_exercises(session, coach_id=None, category_id=lpo_acc_cat.id, ex_type="lpo", names=[
+        "Muscle Snatch", "Muscle Clean",
+    ])
+
+
 def seed_default_users(session: Session) -> None:
     """Cria coach@pam.com e atleta@pam.com (senha 123456) se ainda não existirem.
 
@@ -292,6 +328,7 @@ def run_initial_seed() -> None:
     """Executa o seed completo numa sessão própria. Chamado no startup."""
     with Session(engine) as session:
         seed_global_library(session)
+        ensure_extra_lifts(session)
         seed_default_users(session)
         seed_admin_from_env(session)
         backfill_athlete_coach(session)

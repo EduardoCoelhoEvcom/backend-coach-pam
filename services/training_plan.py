@@ -54,8 +54,27 @@ def build_default_plan(weeks: int, same_weeks: bool) -> dict:
 def _norm_name(s: str) -> str:
     s = (s or "").strip().lower()
     s = s.replace("&", "and")
+    s = s.replace("—", "-").replace("–", "-")
     s = re.sub(r"\s+", " ", s)
     return s
+
+
+def _strip_notes(s: str) -> str:
+    """Remove observações entre parênteses: 'Push Press (sem deslocamento)' -> 'push press'."""
+    s = re.sub(r"\([^)]*\)", " ", s or "")
+    return _norm_name(s)
+
+
+# Variações de nome usadas nas planilhas -> nome na biblioteca.
+_NAME_ALIASES = {
+    "ohs - overhead squat": "overhead squat (ohs)",
+    "ohs": "overhead squat (ohs)",
+    "overhead squat": "overhead squat (ohs)",
+    "split jerk das costas": "split jerk (back rack)",
+    "shoulder press (strict press)": "strict press",
+    "shoulder press": "strict press",
+    "push jerk das costas": "push jerk (back rack)",
+}
 
 
 def resolve_exercise_id_by_name(
@@ -78,9 +97,29 @@ def resolve_exercise_id_by_name(
         )
     ).all()
 
-    hits = [e for e in candidates if _norm_name(e.name) == nn]
-    if len(hits) == 1:
-        return hits[0].id
+    def unique(pred) -> Optional[int]:
+        hits = [e for e in candidates if pred(e)]
+        return hits[0].id if len(hits) == 1 else None
+
+    # 1) nome exato
+    found = unique(lambda e: _norm_name(e.name) == nn)
+    if found:
+        return found
+
+    # 2) apelidos conhecidos
+    stripped = _strip_notes(name)
+    alias = _NAME_ALIASES.get(nn) or _NAME_ALIASES.get(stripped)
+    if alias:
+        found = unique(lambda e: _norm_name(e.name) == alias)
+        if found:
+            return found
+
+    # 3) ignorando observações entre parênteses no nome digitado
+    if stripped and stripped != nn:
+        found = unique(lambda e: _norm_name(e.name) == stripped)
+        if found:
+            return found
+
     return None
 
 

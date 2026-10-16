@@ -55,6 +55,31 @@ def _validate_names(session: Session, coach_id: int, names: List[str]) -> dict:
     return {"matched": matched, "unmatched": unmatched, "complexes": complexes}
 
 
+def _link_bases(session: Session, coach_id: int, plan: dict) -> None:
+    """Liga cada exercício ao movimento da 'Base do %' (de onde sai o RM).
+
+    Complexo -> rm_exercise_id ; exercício simples -> exercise_id.
+    """
+    cache: dict = {}
+    for w in plan.get("weeks", []):
+        for d in w.get("days", []):
+            for ex in d.get("lpo_exercises", []):
+                base = ex.get("rm_base")
+                if not base:
+                    continue
+                if base not in cache:
+                    cache[base] = resolve_exercise_id_by_name(
+                        session, coach_id=coach_id, name=base, ex_type="lpo"
+                    )
+                ex_id = cache[base]
+                if ex_id is None:
+                    continue
+                if ex.get("is_complex"):
+                    ex["rm_exercise_id"] = ex_id
+                else:
+                    ex["exercise_id"] = ex_id
+
+
 @router.post("/preview")
 async def import_preview(
     file: UploadFile = File(...),
@@ -85,7 +110,15 @@ async def import_preview(
 
     out = []
     for idx, ab in enumerate(abas):
-        validation = _validate_names(session, current_coach.id, ab["exercises"])
+        if ab.get("format") == "dias":
+            # Formato com "Base do %": o kg sai do RM da base.
+            validation = _validate_names(
+                session, current_coach.id, [b for b in ab.get("bases", []) if not is_complex_name(b)]
+            )
+            validation["complexes"] = []
+            _link_bases(session, current_coach.id, ab["plan"])
+        else:
+            validation = _validate_names(session, current_coach.id, ab["exercises"])
         # resumo: total de exercícios e séries em todas as semanas
         total_ex = 0
         total_series = 0
@@ -102,7 +135,10 @@ async def import_preview(
             "weeks": ab["weeks"],
             "plan": ab["plan"],
             "exercises": ab["exercises"],
-            "complexes": ab["complexes"],
+            # versão validada (cada parte com exists=True/False)
+            "complexes": validation["complexes"],
+            "format": ab.get("format", "semanas"),
+            "day_map": ab.get("day_map"),
             "validation": validation,
             "summary": {
                 "total_exercises": total_ex,

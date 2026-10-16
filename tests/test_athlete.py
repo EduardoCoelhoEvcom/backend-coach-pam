@@ -118,6 +118,7 @@ def test_athlete_cannot_complete_other_athletes_sheet(
         email="outro@test.com",
         password_hash=get_password_hash("test123"),
         role="athlete",
+        coach_id=coach_user.id,
     )
     session.add(other)
     session.commit()
