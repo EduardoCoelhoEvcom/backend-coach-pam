@@ -14,6 +14,9 @@ class ExerciseRMCurrentItem(BaseModel):
     type: str  # "lpo" | "accessory"
     rm_value: Optional[float] = None
     effective_date: Optional[datetime] = None
+    # Quando o movimento herda o RM de outro (ex.: Clean Pull -> Clean).
+    rm_source_exercise_id: Optional[int] = None
+    rm_source_name: Optional[str] = None
 
 
 class ExerciseRMSetBody(BaseModel):

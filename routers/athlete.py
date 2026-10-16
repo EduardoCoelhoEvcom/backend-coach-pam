@@ -194,13 +194,15 @@ def athlete_get_my_exercise_rms(
     latest_map = {r.exercise_id: r for r in latest_rows}
     own_value = {eid: r.rm_value for eid, r in latest_map.items()}
 
+    name_by_id = {e.id: e.name for e in exs}
     out: List[ExerciseRMCurrentItem] = []
     for e in exs:
         row = latest_map.get(e.id)
-        # Se o movimento puxa o RM de outro, usa o valor do referenciado.
+        # Se o movimento puxa o RM de outro, usa o valor (e a data) do referenciado.
         if e.rm_source_exercise_id:
+            src = latest_map.get(e.rm_source_exercise_id)
             rm_value = own_value.get(e.rm_source_exercise_id)
-            eff = None
+            eff = src.effective_date if src else None
         else:
             rm_value = row.rm_value if row else None
             eff = row.effective_date if row else None
@@ -212,6 +214,8 @@ def athlete_get_my_exercise_rms(
                 type=e.type,
                 rm_value=rm_value,
                 effective_date=eff,
+                rm_source_exercise_id=e.rm_source_exercise_id,
+                rm_source_name=name_by_id.get(e.rm_source_exercise_id) if e.rm_source_exercise_id else None,
             )
         )
 

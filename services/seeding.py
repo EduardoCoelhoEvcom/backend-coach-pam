@@ -229,6 +229,95 @@ def ensure_extra_lifts(session: Session) -> None:
     ])
 
 
+# Variação -> movimento principal de onde ela "puxa" o RM.
+# Fonte: aba "Máximas" das planilhas da Coach Pâm (coluna "puxa de").
+# 1/2 e 1/4 Back Squat ficaram de fora de propósito: na planilha apontam pro
+# Front Squat, o que parece engano — confirmar com a coach antes de incluir.
+RM_INHERITANCE = {
+    "Pin Front Squat": "Front Squat",
+    "Power Balance": "Overhead Squat (OHS)",
+    "Clean Pull": "Clean", "Hang Clean Pull": "Clean",
+    "Low Hang Clean Pull": "Clean", "High Hang Clean Pull": "Clean",
+    "Snatch Pull": "Snatch", "Hang Snatch Pull": "Snatch",
+    "Low Hang Snatch Pull": "Snatch", "High Hang Snatch Pull": "Snatch",
+    "Clean High Pull": "Clean", "Hang Clean High Pull": "Clean",
+    "Low Hang Clean High Pull": "Clean", "High Hang Clean High Pull": "Clean",
+    "Snatch High Pull": "Snatch", "Hang Snatch High Pull": "Snatch",
+    "Low Hang Snatch High Pull": "Snatch", "High Hang Snatch High Pull": "Snatch",
+    "Strict High Pull": "Snatch",
+    "Press Behind the Neck": "Strict Press",
+    "Push Press Behind the Neck": "Push Press",
+    "Clean Deadlift": "Clean", "Tempo Clean Deadlift": "Clean",
+    "Snatch Deadlift": "Snatch", "Tempo Snatch Deadlift": "Snatch",
+    "Mid Thigh Pull Isometric": "Clean",
+    "Hang Muscle Snatch": "Muscle Snatch", "Low Hang Muscle Snatch": "Muscle Snatch",
+    "High Hang Muscle Snatch": "Muscle Snatch",
+    "Hang Power Snatch": "Power Snatch", "Low Hang Power Snatch": "Power Snatch",
+    "High Hang Power Snatch": "Power Snatch",
+    "Hang Snatch": "Snatch", "Low Hang Snatch": "Snatch", "High Hang Snatch": "Snatch",
+    "Hang Muscle Clean": "Muscle Clean", "Low Hang Muscle Clean": "Muscle Clean",
+    "High Hang Muscle Clean": "Muscle Clean",
+    "Hang Power Clean": "Power Clean", "Low Hang Power Clean": "Power Clean",
+    "High Hang Power Clean": "Power Clean",
+    "Hang Clean": "Clean", "Low Hang Clean": "Clean", "High Hang Clean": "Clean",
+    "Push Jerk (Back Rack)": "Push Jerk",
+    "Split Jerk (Back Rack)": "Split Jerk",
+    "Jerk Drive": "Split Jerk",
+}
+
+
+def ensure_rm_inheritance(session: Session) -> None:
+    """Variações herdam o RM do movimento principal (regra do guia da coach).
+
+    Roda em todo startup e é idempotente:
+      - cria (como global) a variação ou o principal que ainda não existir;
+      - só define rm_source_exercise_id onde ele ainda está vazio, então
+        nunca desfaz uma escolha feita pela coach na biblioteca.
+    """
+    def norm(s: str) -> str:
+        return " ".join((s or "").strip().lower().split())
+
+    globals_ = session.exec(
+        select(Exercise).where(Exercise.coach_id == None, Exercise.type == "lpo")  # noqa: E711
+    ).all()
+    by_name = {}
+    for e in globals_:
+        by_name.setdefault(norm(e.name), e)
+
+    var_cat = _get_or_create_category(
+        session, coach_id=None, type="lpo", name="Variações",
+        parent_id=None, sort_order=35,
+    )
+
+    def get_or_create(name: str) -> Exercise:
+        ex = by_name.get(norm(name))
+        if ex:
+            return ex
+        now = datetime.now(timezone.utc)
+        ex = Exercise(
+            coach_id=None, category_id=var_cat.id, name=name, type="lpo",
+            allow_weight_default=True, is_active=True, created_at=now, updated_at=now,
+        )
+        session.add(ex)
+        session.commit()
+        session.refresh(ex)
+        by_name[norm(name)] = ex
+        return ex
+
+    changed = False
+    for variation, main in RM_INHERITANCE.items():
+        main_ex = get_or_create(main)
+        var_ex = get_or_create(variation)
+        if var_ex.id == main_ex.id:
+            continue
+        if var_ex.rm_source_exercise_id is None:
+            var_ex.rm_source_exercise_id = main_ex.id
+            session.add(var_ex)
+            changed = True
+    if changed:
+        session.commit()
+
+
 def seed_default_users(session: Session) -> None:
     """Cria coach@pam.com e atleta@pam.com (senha 123456) se ainda não existirem.
 
@@ -329,6 +418,7 @@ def run_initial_seed() -> None:
     with Session(engine) as session:
         seed_global_library(session)
         ensure_extra_lifts(session)
+        ensure_rm_inheritance(session)
         seed_default_users(session)
         seed_admin_from_env(session)
         backfill_athlete_coach(session)
