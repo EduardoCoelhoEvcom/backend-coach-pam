@@ -15,6 +15,10 @@ from db import get_session
 from services.email import send_email
 from models import (
     AthleteExerciseRMHistory,
+    AthletePlan,
+    VideoCorrection,
+    VideoSubmission,
+    WeeklyCheckin,
     TrainingDayCompletion,
     TrainingSetExecution,
     TrainingSheet,
@@ -421,7 +425,66 @@ def export_my_data(
             e.model_dump(mode="json") for e in executions
         ],
         "rm_history": [r.model_dump(mode="json") for r in rms],
+        **_feedback_export(session, user_id),
     }
+
+
+def _feedback_export(session: Session, user_id: int) -> dict:
+    checkins = session.exec(
+        select(WeeklyCheckin).where(WeeklyCheckin.athlete_id == user_id)
+    ).all()
+    videos = session.exec(
+        select(VideoSubmission).where(VideoSubmission.athlete_id == user_id)
+    ).all()
+    corrections = session.exec(
+        select(VideoCorrection).where(
+            VideoCorrection.submission_id.in_([v.id for v in videos] or [-1])
+        )
+    ).all()
+    plan = session.exec(
+        select(AthletePlan).where(AthletePlan.athlete_id == user_id)
+    ).first()
+    return {
+        "checkins": [c.model_dump(mode="json") for c in checkins],
+        "videos": [v.model_dump(mode="json") for v in videos],
+        "video_corrections": [c.model_dump(mode="json") for c in corrections],
+        "plan": plan.model_dump(mode="json") if plan else None,
+    }
+
+
+def _delete_feedback_data(session: Session, user_id: int) -> None:
+    """Apaga check-ins, vídeos/correções e plano do atleta.
+
+    Se quem sai é a coach, só desvincula (coach_id=None) os registros dos
+    atletas dela — o dado é do atleta, não da coach.
+    """
+    videos = session.exec(
+        select(VideoSubmission).where(VideoSubmission.athlete_id == user_id)
+    ).all()
+    ids = [v.id for v in videos]
+    for row in session.exec(
+        select(VideoCorrection).where(VideoCorrection.submission_id.in_(ids or [-1]))
+    ).all():
+        session.delete(row)
+    for v in videos:
+        v.compare_to_id = None
+        session.add(v)
+    session.flush()
+    for v in videos:
+        session.delete(v)
+    for row in session.exec(
+        select(WeeklyCheckin).where(WeeklyCheckin.athlete_id == user_id)
+    ).all():
+        session.delete(row)
+    for row in session.exec(
+        select(AthletePlan).where(AthletePlan.athlete_id == user_id)
+    ).all():
+        session.delete(row)
+    for model in (WeeklyCheckin, VideoSubmission):
+        for row in session.exec(select(model).where(model.coach_id == user_id)).all():
+            row.coach_id = None
+            session.add(row)
+    session.flush()
 
 
 @router.delete("/me")
@@ -441,6 +504,7 @@ def delete_my_account(
     user_id = current_user.id
 
     # Apaga em ordem (filhos antes de pais pra não violar FK).
+    _delete_feedback_data(session, user_id)
     session.exec(
         select(TrainingSetExecution).where(
             TrainingSetExecution.athlete_id == user_id

@@ -47,6 +47,7 @@ from routers import (
     coach as coach_router,
     coach_import as coach_import_router,
     exercises as exercises_router,
+    feedback as feedback_router,
 )
 from services.seeding import run_initial_seed
 
@@ -89,6 +90,7 @@ app.include_router(coach_router.router)
 app.include_router(coach_import_router.router)
 app.include_router(admin_router.router)
 app.include_router(athlete_router.router)
+app.include_router(feedback_router.router)
 
 
 @app.get("/health", tags=["health"])
