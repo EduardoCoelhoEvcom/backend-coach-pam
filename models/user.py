@@ -25,6 +25,8 @@ class User(SQLModel, table=True):
     # True quando a senha atual é temporária (gerada no "esqueci a senha").
     # O app força a troca no próximo login enquanto isto estiver True.
     must_change_password: bool = Field(default=False)
+    # WhatsApp do atleta, como a coach digitou (ex.: "(51) 99876-5432").
+    whatsapp: Optional[str] = None
 
 
 def get_user_by_email(email: str, session: Session) -> Optional[User]:

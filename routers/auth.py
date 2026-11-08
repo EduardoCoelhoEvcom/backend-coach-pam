@@ -213,10 +213,15 @@ def change_password(
     troca) quanto numa troca normal de senha.
     """
     new_pw = body.new_password or ""
-    if len(new_pw) < 6:
+    if len(new_pw) < 8:
         raise HTTPException(
             status_code=400,
-            detail="Senha precisa ter pelo menos 6 caracteres.",
+            detail="A senha precisa ter pelo menos 8 caracteres.",
+        )
+    if verify_password(new_pw, current_user.password_hash):
+        raise HTTPException(
+            status_code=400,
+            detail="A senha nova precisa ser diferente da atual.",
         )
 
     current_user.password_hash = get_password_hash(new_pw)
