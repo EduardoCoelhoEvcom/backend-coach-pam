@@ -19,6 +19,7 @@ from models import (
     InitialDiagnosis,
     MobilityCompletion,
     MobilityItem,
+    TrainingGoal,
     VideoCorrection,
     VideoSubmission,
     WeeklyCheckin,
@@ -471,10 +472,14 @@ def _coaching_export(session: Session, user_id: int) -> dict:
     diagnosis = session.exec(
         select(InitialDiagnosis).where(InitialDiagnosis.athlete_id == user_id)
     ).first()
+    goal = session.exec(
+        select(TrainingGoal).where(TrainingGoal.athlete_id == user_id)
+    ).first()
     return {
         "mobility": [m.model_dump(mode="json") for m in mobility],
         "mobility_done": [m.model_dump(mode="json") for m in mobility_done],
         "diagnosis": diagnosis.model_dump(mode="json") if diagnosis else None,
+        "goal": goal.model_dump(mode="json") if goal else None,
     }
 
 
@@ -520,11 +525,10 @@ def _delete_feedback_data(session: Session, user_id: int) -> None:
     session.flush()
     for row in items:
         session.delete(row)
-    for row in session.exec(
-        select(InitialDiagnosis).where(InitialDiagnosis.athlete_id == user_id)
-    ).all():
-        session.delete(row)
-    for model in (WeeklyCheckin, VideoSubmission, MobilityItem, InitialDiagnosis):
+    for model in (InitialDiagnosis, TrainingGoal):
+        for row in session.exec(select(model).where(model.athlete_id == user_id)).all():
+            session.delete(row)
+    for model in (WeeklyCheckin, VideoSubmission, MobilityItem, InitialDiagnosis, TrainingGoal):
         for row in session.exec(select(model).where(model.coach_id == user_id)).all():
             row.coach_id = None
             session.add(row)

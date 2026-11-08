@@ -1,4 +1,4 @@
-"""Models de mobilidade por atleta e diagnóstico inicial.
+"""Models de mobilidade por atleta, diagnóstico inicial e objetivo/focos.
 
 Todas são tabelas NOVAS, então `SQLModel.metadata.create_all` cria sozinho no
 deploy (não precisa de ALTER em `_ensure_columns`).
@@ -6,7 +6,8 @@ deploy (não precisa de ALTER em `_ensure_columns`).
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Column, UniqueConstraint
+from sqlalchemy.types import JSON
 from sqlmodel import Field, SQLModel
 
 
@@ -50,4 +51,19 @@ class InitialDiagnosis(SQLModel, table=True):
     mobility: Optional[str] = None  # "Mobilidade"
     pdf_url: Optional[str] = None  # "Ver diagnóstico completo (PDF)" — por enquanto URL
     diagnosed_on: date = Field(default_factory=date.today)  # "Feito pela Coach Pâm em 06/10"
+    updated_at: datetime = Field(default_factory=_utc_now)
+
+
+class TrainingGoal(SQLModel, table=True):
+    """Objetivo e focos do atleta (aba "Plano"), definidos pela coach."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    athlete_id: int = Field(foreign_key="user.id", index=True, unique=True)
+    coach_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
+    objective: Optional[str] = None  # "Competir pela primeira vez no LPO"
+    target: Optional[str] = None  # "Meta: [competição] · [mês/ano]"
+    # Fases por mês, na ordem: ["Base técnica", "Força", "Específico pra prova"]
+    phases: list = Field(default_factory=list, sa_column=Column(JSON))
+    # Focos técnicos: [{"title": "...", "detail": "..."}]
+    focuses: list = Field(default_factory=list, sa_column=Column(JSON))
+    coach_note: Optional[str] = None  # "Recado da coach"
     updated_at: datetime = Field(default_factory=_utc_now)
