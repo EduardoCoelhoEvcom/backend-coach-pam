@@ -47,6 +47,7 @@ from routers import (
     coach as coach_router,
     coach_import as coach_import_router,
     coaching as coaching_router,
+    coach_overview as coach_overview_router,
     exercises as exercises_router,
     feedback as feedback_router,
 )
@@ -93,6 +94,7 @@ app.include_router(admin_router.router)
 app.include_router(athlete_router.router)
 app.include_router(feedback_router.router)
 app.include_router(coaching_router.router)
+app.include_router(coach_overview_router.router)
 
 
 @app.get("/health", tags=["health"])

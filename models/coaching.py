@@ -67,3 +67,12 @@ class TrainingGoal(SQLModel, table=True):
     focuses: list = Field(default_factory=list, sa_column=Column(JSON))
     coach_note: Optional[str] = None  # "Recado da coach"
     updated_at: datetime = Field(default_factory=_utc_now)
+
+
+class CoachNote(SQLModel, table=True):
+    """Notas privadas da coach sobre um atleta (só a coach vê)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    athlete_id: int = Field(foreign_key="user.id", index=True, unique=True)
+    coach_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
+    text: str = ""
+    updated_at: datetime = Field(default_factory=_utc_now)
