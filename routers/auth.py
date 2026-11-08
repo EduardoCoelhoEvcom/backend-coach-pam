@@ -16,6 +16,9 @@ from services.email import send_email
 from models import (
     AthleteExerciseRMHistory,
     AthletePlan,
+    InitialDiagnosis,
+    MobilityCompletion,
+    MobilityItem,
     VideoCorrection,
     VideoSubmission,
     WeeklyCheckin,
@@ -449,6 +452,24 @@ def _feedback_export(session: Session, user_id: int) -> dict:
         "videos": [v.model_dump(mode="json") for v in videos],
         "video_corrections": [c.model_dump(mode="json") for c in corrections],
         "plan": plan.model_dump(mode="json") if plan else None,
+        **_coaching_export(session, user_id),
+    }
+
+
+def _coaching_export(session: Session, user_id: int) -> dict:
+    mobility = session.exec(
+        select(MobilityItem).where(MobilityItem.athlete_id == user_id)
+    ).all()
+    mobility_done = session.exec(
+        select(MobilityCompletion).where(MobilityCompletion.athlete_id == user_id)
+    ).all()
+    diagnosis = session.exec(
+        select(InitialDiagnosis).where(InitialDiagnosis.athlete_id == user_id)
+    ).first()
+    return {
+        "mobility": [m.model_dump(mode="json") for m in mobility],
+        "mobility_done": [m.model_dump(mode="json") for m in mobility_done],
+        "diagnosis": diagnosis.model_dump(mode="json") if diagnosis else None,
     }
 
 
@@ -480,7 +501,25 @@ def _delete_feedback_data(session: Session, user_id: int) -> None:
         select(AthletePlan).where(AthletePlan.athlete_id == user_id)
     ).all():
         session.delete(row)
-    for model in (WeeklyCheckin, VideoSubmission):
+    # Mobilidade (marcações antes dos itens) e diagnóstico do atleta.
+    items = session.exec(
+        select(MobilityItem).where(MobilityItem.athlete_id == user_id)
+    ).all()
+    for row in session.exec(
+        select(MobilityCompletion).where(
+            (MobilityCompletion.athlete_id == user_id)
+            | MobilityCompletion.item_id.in_([i.id for i in items] or [-1])
+        )
+    ).all():
+        session.delete(row)
+    session.flush()
+    for row in items:
+        session.delete(row)
+    for row in session.exec(
+        select(InitialDiagnosis).where(InitialDiagnosis.athlete_id == user_id)
+    ).all():
+        session.delete(row)
+    for model in (WeeklyCheckin, VideoSubmission, MobilityItem, InitialDiagnosis):
         for row in session.exec(select(model).where(model.coach_id == user_id)).all():
             row.coach_id = None
             session.add(row)

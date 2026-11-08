@@ -2,6 +2,7 @@
 
 Importar daqui garante que SQLModel.metadata.create_all veja todas as tabelas.
 """
+from .coaching import InitialDiagnosis, MobilityCompletion, MobilityItem
 from .exercise import Exercise, ExerciseCategory, ExerciseType
 from .feedback import AthletePlan, VideoCorrection, VideoSubmission, WeeklyCheckin
 from .refresh_token import RefreshToken
@@ -24,4 +25,7 @@ __all__ = [
     "VideoSubmission",
     "VideoCorrection",
     "AthletePlan",
+    "MobilityItem",
+    "MobilityCompletion",
+    "InitialDiagnosis",
 ]
