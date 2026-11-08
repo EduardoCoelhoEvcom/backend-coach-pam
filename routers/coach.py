@@ -662,6 +662,8 @@ def coach_list_sheet_executions(
             prescribed_kg=r.prescribed_kg,
             used_kg=r.used_kg,
             diff_kg=r.diff_kg,
+            status=r.status,
+            note=r.note,
             created_at=r.created_at,
             updated_at=r.updated_at,
         )
