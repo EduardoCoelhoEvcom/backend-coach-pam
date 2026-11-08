@@ -123,3 +123,10 @@ def test_notes_deleted_with_athlete_account(coach_client, athlete_client, sessio
     assert r.status_code == 200, r.text
     session.expire_all()
     assert session.exec(select(CoachNote)).all() == []
+
+
+def test_coach_rm_list_marks_variations(coach_client, session, athlete_user):
+    snatch, hang = _exercises(session)
+    rows = {r["exercise_id"]: r for r in coach_client.get(f"/coach/athletes/{athlete_user.id}/exercise-rms").json()}
+    assert rows[hang.id]["rm_source_exercise_id"] == snatch.id
+    assert rows[snatch.id]["rm_source_exercise_id"] is None
