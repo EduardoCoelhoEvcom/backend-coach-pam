@@ -13,6 +13,7 @@ from sqlmodel import Session, SQLModel, select
 from config import ACCESS_TOKEN_EXPIRE_MINUTES, ALERT_EMAIL_TO
 from db import get_session
 from services.email import send_email
+from services.notify import send_ntfy
 from models import (
     AthleteExerciseRMHistory,
     AthletePlan,
@@ -278,20 +279,28 @@ def forgot_password(
         pass
     session.commit()
 
+    alert_body = (
+        "Alguém pediu recuperação de senha no Coach PAM.\n\n"
+        f"Nome: {user.name}\n"
+        f"E-mail: {user.email}\n"
+        f"Perfil: {user.role}\n\n"
+        f"Senha temporária: {temp_password}\n\n"
+        "Repasse essa senha para a pessoa. Ela vai ser forçada a trocar "
+        "no próximo login."
+    )
+
+    # Tenta ntfy (push no celular) e e-mail. Qualquer um que esteja
+    # configurado já basta — se os dois estiverem, manda nos dois.
+    send_ntfy(
+        title=f"Coach PAM: senha esquecida ({user.name})",
+        body=alert_body,
+        priority="high",
+        tags="key,warning",
+    )
     send_email(
         to=ALERT_EMAIL_TO,
         subject=f"[Coach PAM] Senha esquecida — {user.name}",
-        body=(
-            "Alguém pediu recuperação de senha no Coach PAM.\n\n"
-            f"Nome: {user.name}\n"
-            f"E-mail: {user.email}\n"
-            f"Perfil: {user.role}\n\n"
-            f"Senha temporária gerada: {temp_password}\n\n"
-            "Entre em contato com a pessoa e repasse essa senha. "
-            "Recomende que ela troque a senha depois de entrar.\n\n"
-            "Obs.: a senha anterior não pode ser recuperada (fica criptografada). "
-            "Por isso uma nova foi gerada."
-        ),
+        body=alert_body,
     )
 
     return generic

@@ -46,7 +46,15 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
 
 # ---- Database ----
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///coach_pam.db")
+# Procura DATABASE_URL primeiro; se não tiver, aceita POSTGRES_URL
+# (nome padrão quando o Vercel conecta um Postgres gerenciado no projeto).
+# Como último fallback, SQLite local (só pra dev — em serverless o /tmp
+# é efêmero, dados são perdidos).
+DATABASE_URL = (
+    os.getenv("DATABASE_URL")
+    or os.getenv("POSTGRES_URL")
+    or "sqlite:///coach_pam.db"
+)
 
 # ---- CORS ----
 _cors_raw = os.getenv("CORS_ORIGINS", "*").strip()
@@ -67,3 +75,13 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "eduardocoelho12y@gmail.com")
 # Remetente; por padrão usa o próprio SMTP_USER.
 ALERT_EMAIL_FROM = os.getenv("ALERT_EMAIL_FROM", "") or SMTP_USER
+
+# ---- Notificação push (ntfy.sh) ----
+# Alternativa/complemento ao e-mail para alertas administrativos.
+# Como funciona: o admin instala o app `ntfy` (iOS/Android), se inscreve
+# no tópico definido em NTFY_TOPIC, e o backend faz um POST pra
+# https://ntfy.sh/<topico> — a notificação chega como push no celular.
+# O tópico é "segredo por obscuridade": qualquer um com o nome pode
+# enviar, então usa um nome único e difícil de adivinhar.
+NTFY_SERVER = os.getenv("NTFY_SERVER", "https://ntfy.sh")
+NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
