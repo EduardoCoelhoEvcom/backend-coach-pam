@@ -36,8 +36,15 @@ def send_ntfy(*, title: str, body: str, priority: str = "default", tags: str = "
         return False
 
     url = f"{NTFY_SERVER.rstrip('/')}/{NTFY_TOPIC}"
+    # ntfy aceita UTF-8 no Title, mas urllib exige string ASCII-safe nos
+    # headers; então codifica em RFC 2047 (ou cai pra latin-1 safe).
+    try:
+        safe_title = title.encode("latin-1").decode("latin-1")
+    except UnicodeEncodeError:
+        safe_title = title.encode("ascii", "replace").decode("ascii")
+
     headers = {
-        "Title": title.encode("utf-8"),
+        "Title": safe_title,
         "Priority": priority,
     }
     if tags:
