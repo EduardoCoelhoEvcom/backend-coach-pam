@@ -507,6 +507,33 @@ def list_training_sheets(
     return session.exec(stmt).all()
 
 
+@router.delete("/coach/training-sheets/{sheet_id}")
+def delete_training_sheet(
+    sheet_id: int,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    """Apaga uma planilha e todas as execuções/correções ligadas a ela.
+
+    Só o coach dono da planilha consegue apagar.
+    """
+    sheet = session.get(TrainingSheet, sheet_id)
+    if not sheet:
+        raise HTTPException(status_code=404, detail="Planilha não encontrada.")
+    if sheet.coach_id != coach.id:
+        raise HTTPException(status_code=403, detail="Essa planilha não é sua.")
+
+    # Apaga execuções de séries vinculadas a esta planilha
+    for row in session.exec(
+        select(TrainingSetExecution).where(TrainingSetExecution.training_sheet_id == sheet_id)
+    ).all():
+        session.delete(row)
+
+    session.delete(sheet)
+    session.commit()
+    return {"ok": True, "deleted_id": sheet_id}
+
+
 @router.get("/coach/training-sheets/{sheet_id}", response_model=TrainingSheetDetail)
 def get_training_sheet_detail(
     sheet_id: int,
