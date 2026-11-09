@@ -1,10 +1,12 @@
-"""Rotas de mobilidade por atleta e diagnóstico inicial.
+"""Rotas de mobilidade, diagnóstico inicial, objetivo/focos e contato da coach.
 
 Atleta:
   - GET    /athlete/mobility?day=AAAA-MM-DD      → meus itens + se já marquei no dia
   - POST   /athlete/mobility/{id}/done            → marca como feito no dia
   - DELETE /athlete/mobility/{id}/done?day=...    → desmarca
   - GET    /athlete/diagnosis                     → meu diagnóstico inicial (ou null)
+  - GET    /athlete/goal                          → meu objetivo, fases e focos (ou null)
+  - GET    /athlete/coach                         → nome e WhatsApp da minha coach
 
 Coach:
   - GET    /coach/athletes/{id}/mobility          → itens do atleta
@@ -13,6 +15,9 @@ Coach:
   - DELETE /coach/mobility/{item_id}              → remove item
   - GET    /coach/athletes/{id}/diagnosis         → diagnóstico do atleta
   - PUT    /coach/athletes/{id}/diagnosis         → cria/atualiza diagnóstico
+  - GET    /coach/athletes/{id}/goal              → objetivo, fases e focos do atleta
+  - PUT    /coach/athletes/{id}/goal              → cria/atualiza objetivo, fases e focos
+  - PUT    /coach/me/whatsapp                     → WhatsApp da própria coach
 
 `day` é opcional: o app manda a data local do aluno, pra não virar o dia
 no horário do servidor (UTC). Sem `day`, vale a data do servidor.
@@ -27,7 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, SQLModel, select
 
 from db import get_session
-from models import InitialDiagnosis, MobilityCompletion, MobilityItem, User
+from models import InitialDiagnosis, MobilityCompletion, MobilityItem, TrainingGoal, User
 from security import require_role
 
 router = APIRouter(tags=["coaching"])
@@ -366,3 +371,129 @@ def coach_set_diagnosis(
     session.commit()
     session.refresh(d)
     return _diagnosis_out(d)
+
+
+# ============================================================
+# Objetivo e focos (aba "Plano")
+# ============================================================
+class FocusItem(SQLModel):
+    title: str
+    detail: Optional[str] = None
+
+
+class GoalIn(SQLModel):
+    objective: Optional[str] = None
+    target: Optional[str] = None
+    phases: List[str] = []
+    focuses: List[FocusItem] = []
+    coach_note: Optional[str] = None
+
+
+class GoalOut(SQLModel):
+    athlete_id: int
+    objective: Optional[str]
+    target: Optional[str]
+    phases: List[str]
+    focuses: List[FocusItem]
+    coach_note: Optional[str]
+    updated_at: datetime
+
+
+def _goal_out(g: TrainingGoal) -> GoalOut:
+    return GoalOut(
+        athlete_id=g.athlete_id,
+        objective=g.objective,
+        target=g.target,
+        phases=list(g.phases or []),
+        focuses=[FocusItem(**f) for f in (g.focuses or [])],
+        coach_note=g.coach_note,
+        updated_at=g.updated_at,
+    )
+
+
+def _goal_of(session: Session, athlete_id: int) -> Optional[TrainingGoal]:
+    return session.exec(
+        select(TrainingGoal).where(TrainingGoal.athlete_id == athlete_id)
+    ).first()
+
+
+@router.get("/athlete/goal", response_model=Optional[GoalOut])
+def athlete_get_goal(
+    session: Session = Depends(get_session),
+    athlete: User = Depends(require_role("athlete")),
+):
+    g = _goal_of(session, athlete.id)
+    return _goal_out(g) if g else None
+
+
+@router.get("/coach/athletes/{athlete_id}/goal", response_model=Optional[GoalOut])
+def coach_get_goal(
+    athlete_id: int,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    _owned_athlete(session, coach, athlete_id)
+    g = _goal_of(session, athlete_id)
+    return _goal_out(g) if g else None
+
+
+@router.put("/coach/athletes/{athlete_id}/goal", response_model=GoalOut)
+def coach_set_goal(
+    athlete_id: int,
+    payload: GoalIn,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    _owned_athlete(session, coach, athlete_id)
+    g = _goal_of(session, athlete_id) or TrainingGoal(athlete_id=athlete_id)
+    g.coach_id = coach.id
+    g.objective = _clean(payload.objective)
+    g.target = _clean(payload.target)
+    g.phases = [p.strip() for p in payload.phases if p and p.strip()]
+    g.focuses = [
+        {"title": f.title.strip(), "detail": _clean(f.detail)}
+        for f in payload.focuses
+        if f.title and f.title.strip()
+    ]
+    g.coach_note = _clean(payload.coach_note)
+    g.updated_at = _now()
+    session.add(g)
+    session.commit()
+    session.refresh(g)
+    return _goal_out(g)
+
+
+# ============================================================
+# Contato da coach (botão do WhatsApp na aba "Eu")
+# ============================================================
+class CoachContactOut(SQLModel):
+    name: Optional[str] = None
+    whatsapp: Optional[str] = None
+
+
+class WhatsappIn(SQLModel):
+    whatsapp: Optional[str] = None
+
+
+@router.get("/athlete/coach", response_model=CoachContactOut)
+def athlete_get_coach(
+    session: Session = Depends(get_session),
+    athlete: User = Depends(require_role("athlete")),
+):
+    coach = session.get(User, athlete.coach_id) if athlete.coach_id else None
+    if not coach:
+        return CoachContactOut()
+    return CoachContactOut(name=coach.name, whatsapp=coach.whatsapp)
+
+
+@router.put("/coach/me/whatsapp", response_model=CoachContactOut)
+def coach_set_own_whatsapp(
+    payload: WhatsappIn,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    coach.whatsapp = _clean(payload.whatsapp)
+    session.add(coach)
+    session.commit()
+    session.refresh(coach)
+    return CoachContactOut(name=coach.name, whatsapp=coach.whatsapp)
