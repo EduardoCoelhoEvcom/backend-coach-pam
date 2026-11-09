@@ -4,6 +4,7 @@
   - resolve_exercise_id_by_name: lookup por nome normalizado.
   - compute_end_date: data final = start + weeks*7 - 1.
   - build_default_plan: scaffold inicial de plano (todos os dias, sem exercícios).
+  - normalize_technical: limpa o bloco "Técnicos" de um dia.
 """
 import json
 import re
@@ -32,7 +33,7 @@ def build_default_plan(weeks: int, same_weeks: bool) -> dict:
         return {
             "week_number": week_number,
             "days": [
-                {"day": day, "rest": False, "coach_notes": "", "exercises": []}
+                {"day": day, "rest": False, "coach_notes": "", "exercises": [], "technical": []}
                 for day in days_order
             ],
         }
@@ -203,4 +204,36 @@ def normalize_plan_for_sheet(
 
             d["accessories"] = normalized_acc
 
+            # ---- Técnicos (aquecimento neural, barra vazia) ----
+            d["technical"] = normalize_technical(d.get("technical"))
+
     return {"weeks": weeks}
+
+
+def _clean_text(v, limit: int) -> str:
+    return str(v or "").strip()[:limit]
+
+
+def normalize_technical(raw) -> list:
+    """Bloco "Técnicos" do dia: itens sem carga, sem % e sem séries.
+
+    Cada item: {name, prescription, instructions, video_url}.
+    Itens sem nome são descartados; link de vídeo só se começar com http(s).
+    """
+    out = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        name = _clean_text(item.get("name"), 200)
+        if not name:
+            continue
+        video = _clean_text(item.get("video_url"), 500)
+        if not re.match(r"^https?://", video, re.IGNORECASE):
+            video = ""
+        out.append({
+            "name": name,
+            "prescription": _clean_text(item.get("prescription"), 120) or None,
+            "instructions": _clean_text(item.get("instructions"), 2000) or None,
+            "video_url": video or None,
+        })
+    return out
