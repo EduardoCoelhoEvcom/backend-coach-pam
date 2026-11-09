@@ -25,13 +25,21 @@ logger = logging.getLogger(__name__)
 
 
 def is_r2_configured() -> bool:
-    return bool(
-        R2_BUCKET
-        and R2_ENDPOINT
-        and R2_ACCESS_KEY_ID
-        and R2_SECRET_ACCESS_KEY
-        and R2_PUBLIC_URL
-    )
+    missing = [
+        name
+        for name, val in [
+            ("R2_BUCKET", R2_BUCKET),
+            ("R2_ENDPOINT", R2_ENDPOINT),
+            ("R2_ACCESS_KEY_ID", R2_ACCESS_KEY_ID),
+            ("R2_SECRET_ACCESS_KEY", R2_SECRET_ACCESS_KEY),
+            ("R2_PUBLIC_URL", R2_PUBLIC_URL),
+        ]
+        if not val
+    ]
+    if missing:
+        logger.error("[r2] variáveis ausentes/vazias: %s", ", ".join(missing))
+        return False
+    return True
 
 
 def _client():
