@@ -102,3 +102,5 @@ R2_ENDPOINT = os.getenv(
 R2_PUBLIC_URL = os.getenv("R2_PUBLIC_URL", "")
 # Limite por vídeo (MB). Validado antes do upload.
 VIDEO_MAX_MB = int(os.getenv("VIDEO_MAX_MB", "100"))
+# Áudio de correção gravado pela coach no app (alguns minutos cabem folgado).
+AUDIO_MAX_MB = int(os.getenv("AUDIO_MAX_MB", "20"))
