@@ -57,12 +57,12 @@ def send_ntfy(*, title: str, body: str, priority: str = "default", tags: str = "
             headers=headers,
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             if 200 <= resp.status < 300:
-                logger.info("[ntfy] enviado (título: %s)", title)
+                logger.info("[ntfy] enviado (titulo: %s)", title)
                 return True
             logger.error("[ntfy] status inesperado: %s", resp.status)
             return False
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError) as exc:
-        logger.error("[ntfy] falha ao enviar: %s", exc)
+    except Exception as exc:  # noqa: BLE001 — jamais quebrar o chamador
+        logger.error("[ntfy] falha ao enviar: %r", exc)
         return False
