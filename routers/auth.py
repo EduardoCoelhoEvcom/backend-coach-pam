@@ -15,6 +15,13 @@ from db import get_session
 from services.email import send_email
 from models import (
     AthleteExerciseRMHistory,
+    AthletePlan,
+    InitialDiagnosis,
+    MobilityCompletion,
+    MobilityItem,
+    VideoCorrection,
+    VideoSubmission,
+    WeeklyCheckin,
     TrainingDayCompletion,
     TrainingSetExecution,
     TrainingSheet,
@@ -206,10 +213,15 @@ def change_password(
     troca) quanto numa troca normal de senha.
     """
     new_pw = body.new_password or ""
-    if len(new_pw) < 6:
+    if len(new_pw) < 8:
         raise HTTPException(
             status_code=400,
-            detail="Senha precisa ter pelo menos 6 caracteres.",
+            detail="A senha precisa ter pelo menos 8 caracteres.",
+        )
+    if verify_password(new_pw, current_user.password_hash):
+        raise HTTPException(
+            status_code=400,
+            detail="A senha nova precisa ser diferente da atual.",
         )
 
     current_user.password_hash = get_password_hash(new_pw)
@@ -421,7 +433,102 @@ def export_my_data(
             e.model_dump(mode="json") for e in executions
         ],
         "rm_history": [r.model_dump(mode="json") for r in rms],
+        **_feedback_export(session, user_id),
     }
+
+
+def _feedback_export(session: Session, user_id: int) -> dict:
+    checkins = session.exec(
+        select(WeeklyCheckin).where(WeeklyCheckin.athlete_id == user_id)
+    ).all()
+    videos = session.exec(
+        select(VideoSubmission).where(VideoSubmission.athlete_id == user_id)
+    ).all()
+    corrections = session.exec(
+        select(VideoCorrection).where(
+            VideoCorrection.submission_id.in_([v.id for v in videos] or [-1])
+        )
+    ).all()
+    plan = session.exec(
+        select(AthletePlan).where(AthletePlan.athlete_id == user_id)
+    ).first()
+    return {
+        "checkins": [c.model_dump(mode="json") for c in checkins],
+        "videos": [v.model_dump(mode="json") for v in videos],
+        "video_corrections": [c.model_dump(mode="json") for c in corrections],
+        "plan": plan.model_dump(mode="json") if plan else None,
+        **_coaching_export(session, user_id),
+    }
+
+
+def _coaching_export(session: Session, user_id: int) -> dict:
+    mobility = session.exec(
+        select(MobilityItem).where(MobilityItem.athlete_id == user_id)
+    ).all()
+    mobility_done = session.exec(
+        select(MobilityCompletion).where(MobilityCompletion.athlete_id == user_id)
+    ).all()
+    diagnosis = session.exec(
+        select(InitialDiagnosis).where(InitialDiagnosis.athlete_id == user_id)
+    ).first()
+    return {
+        "mobility": [m.model_dump(mode="json") for m in mobility],
+        "mobility_done": [m.model_dump(mode="json") for m in mobility_done],
+        "diagnosis": diagnosis.model_dump(mode="json") if diagnosis else None,
+    }
+
+
+def _delete_feedback_data(session: Session, user_id: int) -> None:
+    """Apaga check-ins, vídeos/correções e plano do atleta.
+
+    Se quem sai é a coach, só desvincula (coach_id=None) os registros dos
+    atletas dela — o dado é do atleta, não da coach.
+    """
+    videos = session.exec(
+        select(VideoSubmission).where(VideoSubmission.athlete_id == user_id)
+    ).all()
+    ids = [v.id for v in videos]
+    for row in session.exec(
+        select(VideoCorrection).where(VideoCorrection.submission_id.in_(ids or [-1]))
+    ).all():
+        session.delete(row)
+    for v in videos:
+        v.compare_to_id = None
+        session.add(v)
+    session.flush()
+    for v in videos:
+        session.delete(v)
+    for row in session.exec(
+        select(WeeklyCheckin).where(WeeklyCheckin.athlete_id == user_id)
+    ).all():
+        session.delete(row)
+    for row in session.exec(
+        select(AthletePlan).where(AthletePlan.athlete_id == user_id)
+    ).all():
+        session.delete(row)
+    # Mobilidade (marcações antes dos itens) e diagnóstico do atleta.
+    items = session.exec(
+        select(MobilityItem).where(MobilityItem.athlete_id == user_id)
+    ).all()
+    for row in session.exec(
+        select(MobilityCompletion).where(
+            (MobilityCompletion.athlete_id == user_id)
+            | MobilityCompletion.item_id.in_([i.id for i in items] or [-1])
+        )
+    ).all():
+        session.delete(row)
+    session.flush()
+    for row in items:
+        session.delete(row)
+    for row in session.exec(
+        select(InitialDiagnosis).where(InitialDiagnosis.athlete_id == user_id)
+    ).all():
+        session.delete(row)
+    for model in (WeeklyCheckin, VideoSubmission, MobilityItem, InitialDiagnosis):
+        for row in session.exec(select(model).where(model.coach_id == user_id)).all():
+            row.coach_id = None
+            session.add(row)
+    session.flush()
 
 
 @router.delete("/me")
@@ -441,6 +548,7 @@ def delete_my_account(
     user_id = current_user.id
 
     # Apaga em ordem (filhos antes de pais pra não violar FK).
+    _delete_feedback_data(session, user_id)
     session.exec(
         select(TrainingSetExecution).where(
             TrainingSetExecution.athlete_id == user_id

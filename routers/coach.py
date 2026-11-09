@@ -15,8 +15,9 @@ Inclui:
   - /coach/training-sheets/{sheet_id}/executions (GET)
 """
 import json
+import secrets
 from datetime import date, datetime, timedelta, timezone
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import EmailStr
@@ -26,6 +27,7 @@ from sqlmodel import Session, SQLModel, select
 from db import get_session
 from models import (
     AthleteExerciseRMHistory,
+    AthletePlan,
     Exercise,
     TrainingDayCompletion,
     TrainingSetExecution,
@@ -83,12 +85,26 @@ class UserRead(SQLModel):
     id: int
     name: str
     email: str
+    whatsapp: Optional[str] = None
+    # True enquanto o atleta não trocou a senha provisória ("Não entrou ainda").
+    must_change_password: bool = False
+
+
+# Planos que a coach escolhe no "+ Novo atleta".
+PLAN_OPTIONS = {
+    "experience": {"plan_name": "Experience", "months_total": 6, "monthly_price": 190.0},
+    "avulso": {"plan_name": "Mês avulso", "months_total": None, "monthly_price": 230.0},
+}
 
 
 class AthleteCreate(SQLModel):
     name: str
     email: EmailStr
-    password: str
+    # Sem senha, o backend gera uma provisória (ex.: PAM-7K4Q2X).
+    password: Optional[str] = None
+    whatsapp: Optional[str] = None
+    plan: Optional[str] = None  # "experience" | "avulso"
+    start_date: Optional[date] = None
 
 
 class AthleteRead(SQLModel):
@@ -96,6 +112,18 @@ class AthleteRead(SQLModel):
     name: str
     email: str
     role: str
+    whatsapp: Optional[str] = None
+    must_change_password: bool = False
+    # Só vem na resposta do cadastro: a coach repassa pro atleta.
+    temp_password: Optional[str] = None
+    plan_name: Optional[str] = None
+    start_date: Optional[date] = None
+
+
+def _generate_athlete_password() -> str:
+    """Senha provisória legível, no formato PAM-XXXXXX (sem letras ambíguas)."""
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    return "PAM-" + "".join(secrets.choice(alphabet) for _ in range(6))
 
 
 # ============================================================
@@ -119,28 +147,59 @@ def create_athlete_for_coach(
     session: Session = Depends(get_session),
     current_coach: User = Depends(require_role("coach")),
 ):
+    """Cadastra um atleta da coach ("+ Novo atleta").
+
+    A senha é sempre provisória: o atleta é obrigado a criar a dele no
+    primeiro acesso. Se `password` não vier, o backend gera uma e devolve em
+    `temp_password` (é a única vez que ela aparece).
+    """
     from models import get_user_by_email
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Informe o nome do atleta.")
     existing = get_user_by_email(payload.email.strip().lower(), session)
     if existing:
         raise HTTPException(
             status_code=400,
             detail="Já existe um usuário com esse e-mail.",
         )
+    plan = None
+    if payload.plan:
+        plan = PLAN_OPTIONS.get(payload.plan)
+        if plan is None:
+            raise HTTPException(status_code=422, detail="Plano inválido.")
 
+    temp_password = payload.password or _generate_athlete_password()
+    start = payload.start_date or date.today()
     user = User(
-        name=payload.name.strip(),
+        name=name,
         email=payload.email.strip().lower(),
-        password_hash=get_password_hash(payload.password),
+        password_hash=get_password_hash(temp_password),
         role="athlete",
         status_pagamento="ok",
-        vencimento=date.today() + timedelta(days=30),
+        vencimento=start + timedelta(days=30),
         coach_id=current_coach.id,
+        must_change_password=True,
+        whatsapp=(payload.whatsapp or "").strip() or None,
     )
     session.add(user)
+    session.flush()
+    if plan:
+        session.add(AthletePlan(athlete_id=user.id, start_date=start, **plan))
     session.commit()
     session.refresh(user)
 
-    return AthleteRead(id=user.id, name=user.name, email=user.email, role=user.role)
+    return AthleteRead(
+        id=user.id,
+        name=user.name,
+        email=user.email,
+        role=user.role,
+        whatsapp=user.whatsapp,
+        must_change_password=True,
+        temp_password=None if payload.password else temp_password,
+        plan_name=plan["plan_name"] if plan else None,
+        start_date=start,
+    )
 
 
 # ============================================================

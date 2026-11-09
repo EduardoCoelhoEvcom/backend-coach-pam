@@ -1,0 +1,518 @@
+"""Rotas de acompanhamento (check-ins, correções de vídeo e plano do atleta).
+
+Atleta:
+  - GET  /athlete/checkins/current          → check-in desta semana (ou null) + tipo esperado
+  - POST /athlete/checkins                  → responde/atualiza o check-in da semana
+  - GET  /athlete/checkins                  → histórico
+  - POST /athlete/videos                    → envia vídeo de um exercício
+  - GET  /athlete/videos                    → meus vídeos + correções
+  - GET  /athlete/corrections/pending       → card "Antes de começar" (corrigidos e não lidos)
+  - POST /athlete/videos/{id}/ack           → "Entendi, vou aplicar hoje"
+  - GET  /athlete/plan                      → plano contratado (aba "Eu")
+
+Coach:
+  - GET  /coach/checkins?week_start=AAAA-MM-DD → check-ins da semana + quem falta
+  - POST /coach/checkins/{id}/seen          → marca como visto (resposta opcional)
+  - GET  /coach/videos?status=pendente      → fila de vídeos
+  - POST /coach/videos/{id}/corrections     → envia correções (marca como corrigido)
+  - GET  /coach/athletes/{id}/plan          → plano do atleta
+  - PUT  /coach/athletes/{id}/plan          → define/atualiza plano
+
+Os arquivos (vídeo e áudio) chegam como URL: o upload em si fica num storage
+externo (ver README da PR). O backend só guarda o endereço.
+"""
+from datetime import date, datetime, timedelta, timezone
+from typing import Dict, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlmodel import Session, SQLModel, select
+
+from db import get_session
+from models import (
+    AthletePlan,
+    User,
+    VideoCorrection,
+    VideoSubmission,
+    WeeklyCheckin,
+)
+from security import require_role
+
+router = APIRouter(tags=["feedback"])
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _monday(d: date) -> date:
+    return d - timedelta(days=d.weekday())
+
+
+def _owned_athlete(session: Session, coach: User, athlete_id: int) -> User:
+    athlete = session.get(User, athlete_id)
+    if not athlete or athlete.role != "athlete":
+        raise HTTPException(status_code=404, detail="Atleta não encontrado.")
+    if athlete.coach_id != coach.id:
+        raise HTTPException(status_code=403, detail="Este atleta não pertence a você.")
+    return athlete
+
+
+# ============================================================
+# Schemas
+# ============================================================
+class CheckinIn(SQLModel):
+    kind: Optional[str] = None  # "inicio_mes" | "semanal"; None = o backend decide
+    answers: Dict = {}
+    has_pain: bool = False
+    pain_note: Optional[str] = None
+    needs_attention: bool = False
+    athlete_note: Optional[str] = None
+
+
+class CheckinOut(SQLModel):
+    id: int
+    athlete_id: int
+    athlete_name: Optional[str] = None
+    week_start: date
+    kind: str
+    answers: Dict
+    has_pain: bool
+    pain_note: Optional[str]
+    needs_attention: bool
+    athlete_note: Optional[str]
+    coach_seen_at: Optional[datetime]
+    coach_reply: Optional[str]
+    created_at: datetime
+
+
+class CurrentCheckinOut(SQLModel):
+    week_start: date
+    expected_kind: str
+    checkin: Optional[CheckinOut]
+
+
+class CoachCheckinsOut(SQLModel):
+    week_start: date
+    answered: List[CheckinOut]
+    missing: List[Dict]  # [{id, name}]
+
+
+class SeenIn(SQLModel):
+    reply: Optional[str] = None
+
+
+class VideoIn(SQLModel):
+    exercise_name: str
+    video_url: str
+    training_sheet_id: Optional[int] = None
+    week_number: Optional[int] = None
+    day: Optional[str] = None
+    athlete_note: Optional[str] = None
+    compare_to_id: Optional[int] = None
+
+
+class CorrectionIn(SQLModel):
+    title: str
+    detail: Optional[str] = None
+    timestamp_sec: Optional[float] = None
+    audio_url: Optional[str] = None
+    audio_duration_sec: Optional[float] = None
+    is_focus: bool = False
+
+
+class CorrectionsIn(SQLModel):
+    corrections: List[CorrectionIn]
+
+
+class CorrectionOut(CorrectionIn):
+    id: int
+
+
+class VideoOut(SQLModel):
+    id: int
+    athlete_id: int
+    athlete_name: Optional[str] = None
+    exercise_name: str
+    video_url: str
+    training_sheet_id: Optional[int]
+    week_number: Optional[int]
+    day: Optional[str]
+    athlete_note: Optional[str]
+    compare_to_id: Optional[int]
+    status: str
+    corrected_at: Optional[datetime]
+    acknowledged_at: Optional[datetime]
+    created_at: datetime
+    corrections: List[CorrectionOut] = []
+
+
+class PlanIn(SQLModel):
+    plan_name: str
+    months_total: Optional[int] = None
+    monthly_price: Optional[float] = None
+    show_price_to_athlete: bool = True
+    start_date: Optional[date] = None
+    notes: Optional[str] = None
+
+
+class PlanOut(SQLModel):
+    plan_name: str
+    months_total: Optional[int]
+    current_month: int
+    monthly_price: Optional[float]
+    start_date: date
+    notes: Optional[str]
+
+
+# ============================================================
+# Helpers de serialização
+# ============================================================
+def _checkin_out(c: WeeklyCheckin, name: Optional[str] = None) -> CheckinOut:
+    return CheckinOut(**c.model_dump(), athlete_name=name)
+
+
+def _video_out(session: Session, v: VideoSubmission, name: Optional[str] = None) -> VideoOut:
+    corr = session.exec(
+        select(VideoCorrection)
+        .where(VideoCorrection.submission_id == v.id)
+        .order_by(VideoCorrection.is_focus.desc(), VideoCorrection.id)
+    ).all()
+    return VideoOut(
+        **v.model_dump(),
+        athlete_name=name,
+        corrections=[CorrectionOut(**c.model_dump()) for c in corr],
+    )
+
+
+def _expected_kind(session: Session, athlete_id: int, week_start: date) -> str:
+    """Semana 1 do mês (ou primeiro check-in) → "inicio_mes"; senão "semanal"."""
+    if week_start.day <= 7:
+        return "inicio_mes"
+    has_any = session.exec(
+        select(WeeklyCheckin.id).where(WeeklyCheckin.athlete_id == athlete_id)
+    ).first()
+    return "semanal" if has_any else "inicio_mes"
+
+
+def _months_between(start: date, today: date) -> int:
+    return (today.year - start.year) * 12 + (today.month - start.month) - (
+        1 if today.day < start.day else 0
+    )
+
+
+# ============================================================
+# Atleta — check-ins
+# ============================================================
+@router.get("/athlete/checkins/current", response_model=CurrentCheckinOut)
+def athlete_current_checkin(
+    session: Session = Depends(get_session),
+    athlete: User = Depends(require_role("athlete")),
+):
+    week = _monday(date.today())
+    c = session.exec(
+        select(WeeklyCheckin).where(
+            WeeklyCheckin.athlete_id == athlete.id, WeeklyCheckin.week_start == week
+        )
+    ).first()
+    return CurrentCheckinOut(
+        week_start=week,
+        expected_kind=c.kind if c else _expected_kind(session, athlete.id, week),
+        checkin=_checkin_out(c) if c else None,
+    )
+
+
+@router.post("/athlete/checkins", response_model=CheckinOut)
+def athlete_submit_checkin(
+    payload: CheckinIn,
+    session: Session = Depends(get_session),
+    athlete: User = Depends(require_role("athlete")),
+):
+    week = _monday(date.today())
+    c = session.exec(
+        select(WeeklyCheckin).where(
+            WeeklyCheckin.athlete_id == athlete.id, WeeklyCheckin.week_start == week
+        )
+    ).first()
+    if c is None:
+        c = WeeklyCheckin(
+            athlete_id=athlete.id,
+            coach_id=athlete.coach_id,
+            week_start=week,
+            kind=payload.kind or _expected_kind(session, athlete.id, week),
+        )
+    elif payload.kind:
+        c.kind = payload.kind
+    c.answers = payload.answers or {}
+    c.has_pain = payload.has_pain
+    c.pain_note = (payload.pain_note or "").strip() or None if payload.has_pain else None
+    c.needs_attention = payload.needs_attention or payload.has_pain
+    c.athlete_note = (payload.athlete_note or "").strip() or None
+    c.updated_at = _now()
+    # Editou depois que a coach viu → volta pra "não visto".
+    c.coach_seen_at = None
+    session.add(c)
+    session.commit()
+    session.refresh(c)
+    return _checkin_out(c)
+
+
+@router.get("/athlete/checkins", response_model=List[CheckinOut])
+def athlete_list_checkins(
+    session: Session = Depends(get_session),
+    athlete: User = Depends(require_role("athlete")),
+):
+    rows = session.exec(
+        select(WeeklyCheckin)
+        .where(WeeklyCheckin.athlete_id == athlete.id)
+        .order_by(WeeklyCheckin.week_start.desc())
+    ).all()
+    return [_checkin_out(c) for c in rows]
+
+
+# ============================================================
+# Atleta — vídeos e correções
+# ============================================================
+@router.post("/athlete/videos", response_model=VideoOut)
+def athlete_send_video(
+    payload: VideoIn,
+    session: Session = Depends(get_session),
+    athlete: User = Depends(require_role("athlete")),
+):
+    if not payload.video_url.strip() or not payload.exercise_name.strip():
+        raise HTTPException(status_code=422, detail="Informe o exercício e o vídeo.")
+    if payload.compare_to_id is not None:
+        prev = session.get(VideoSubmission, payload.compare_to_id)
+        if not prev or prev.athlete_id != athlete.id:
+            raise HTTPException(status_code=404, detail="Vídeo anterior não encontrado.")
+    v = VideoSubmission(
+        athlete_id=athlete.id,
+        coach_id=athlete.coach_id,
+        **payload.model_dump(),
+    )
+    v.exercise_name = v.exercise_name.strip()
+    v.video_url = v.video_url.strip()
+    session.add(v)
+    session.commit()
+    session.refresh(v)
+    return _video_out(session, v)
+
+
+@router.get("/athlete/videos", response_model=List[VideoOut])
+def athlete_list_videos(
+    session: Session = Depends(get_session),
+    athlete: User = Depends(require_role("athlete")),
+):
+    rows = session.exec(
+        select(VideoSubmission)
+        .where(VideoSubmission.athlete_id == athlete.id)
+        .order_by(VideoSubmission.created_at.desc())
+    ).all()
+    return [_video_out(session, v) for v in rows]
+
+
+@router.get("/athlete/corrections/pending", response_model=List[VideoOut])
+def athlete_pending_corrections(
+    session: Session = Depends(get_session),
+    athlete: User = Depends(require_role("athlete")),
+):
+    rows = session.exec(
+        select(VideoSubmission)
+        .where(
+            VideoSubmission.athlete_id == athlete.id,
+            VideoSubmission.status == "corrigido",
+            VideoSubmission.acknowledged_at.is_(None),
+        )
+        .order_by(VideoSubmission.corrected_at.desc())
+    ).all()
+    return [_video_out(session, v) for v in rows]
+
+
+@router.post("/athlete/videos/{video_id}/ack", response_model=VideoOut)
+def athlete_ack_video(
+    video_id: int,
+    session: Session = Depends(get_session),
+    athlete: User = Depends(require_role("athlete")),
+):
+    v = session.get(VideoSubmission, video_id)
+    if not v or v.athlete_id != athlete.id:
+        raise HTTPException(status_code=404, detail="Vídeo não encontrado.")
+    if v.acknowledged_at is None:
+        v.acknowledged_at = _now()
+        session.add(v)
+        session.commit()
+        session.refresh(v)
+    return _video_out(session, v)
+
+
+@router.get("/athlete/plan", response_model=Optional[PlanOut])
+def athlete_get_plan(
+    session: Session = Depends(get_session),
+    athlete: User = Depends(require_role("athlete")),
+):
+    p = session.exec(select(AthletePlan).where(AthletePlan.athlete_id == athlete.id)).first()
+    if not p:
+        return None
+    out = _plan_out(p)
+    if not p.show_price_to_athlete:
+        out.monthly_price = None
+    return out
+
+
+def _plan_out(p: AthletePlan) -> PlanOut:
+    current = max(1, _months_between(p.start_date, date.today()) + 1)
+    if p.months_total:
+        current = min(current, p.months_total)
+    return PlanOut(
+        plan_name=p.plan_name,
+        months_total=p.months_total,
+        current_month=current,
+        monthly_price=p.monthly_price,
+        start_date=p.start_date,
+        notes=p.notes,
+    )
+
+
+# ============================================================
+# Coach — check-ins
+# ============================================================
+@router.get("/coach/checkins", response_model=CoachCheckinsOut)
+def coach_list_checkins(
+    week_start: Optional[date] = Query(default=None),
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    week = _monday(week_start or date.today())
+    athletes = session.exec(
+        select(User).where(User.role == "athlete", User.coach_id == coach.id)
+    ).all()
+    names = {a.id: a.name for a in athletes}
+    rows = session.exec(
+        select(WeeklyCheckin).where(
+            WeeklyCheckin.week_start == week,
+            WeeklyCheckin.athlete_id.in_(list(names) or [-1]),
+        )
+    ).all()
+    # Quem precisa de atenção primeiro, depois os não vistos.
+    rows = sorted(
+        rows,
+        key=lambda c: (not c.needs_attention, c.coach_seen_at is not None, names.get(c.athlete_id, "")),
+    )
+    answered_ids = {c.athlete_id for c in rows}
+    return CoachCheckinsOut(
+        week_start=week,
+        answered=[_checkin_out(c, names.get(c.athlete_id)) for c in rows],
+        missing=[
+            {"id": a.id, "name": a.name}
+            for a in sorted(athletes, key=lambda a: a.name)
+            if a.id not in answered_ids
+        ],
+    )
+
+
+@router.post("/coach/checkins/{checkin_id}/seen", response_model=CheckinOut)
+def coach_mark_checkin_seen(
+    checkin_id: int,
+    payload: SeenIn,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    c = session.get(WeeklyCheckin, checkin_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Check-in não encontrado.")
+    athlete = _owned_athlete(session, coach, c.athlete_id)
+    c.coach_seen_at = _now()
+    if payload.reply is not None:
+        c.coach_reply = payload.reply.strip() or None
+    session.add(c)
+    session.commit()
+    session.refresh(c)
+    return _checkin_out(c, athlete.name)
+
+
+# ============================================================
+# Coach — vídeos
+# ============================================================
+@router.get("/coach/videos", response_model=List[VideoOut])
+def coach_list_videos(
+    status: Optional[str] = Query(default="pendente"),
+    athlete_id: Optional[int] = Query(default=None),
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    athletes = session.exec(
+        select(User).where(User.role == "athlete", User.coach_id == coach.id)
+    ).all()
+    names = {a.id: a.name for a in athletes}
+    stmt = select(VideoSubmission).where(VideoSubmission.athlete_id.in_(list(names) or [-1]))
+    if status:
+        stmt = stmt.where(VideoSubmission.status == status)
+    if athlete_id is not None:
+        stmt = stmt.where(VideoSubmission.athlete_id == athlete_id)
+    # Fila: mais antigo primeiro (quem esperou mais é atendido antes).
+    stmt = stmt.order_by(VideoSubmission.created_at.asc())
+    return [_video_out(session, v, names.get(v.athlete_id)) for v in session.exec(stmt).all()]
+
+
+@router.post("/coach/videos/{video_id}/corrections", response_model=VideoOut)
+def coach_send_corrections(
+    video_id: int,
+    payload: CorrectionsIn,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    v = session.get(VideoSubmission, video_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Vídeo não encontrado.")
+    athlete = _owned_athlete(session, coach, v.athlete_id)
+    if not payload.corrections:
+        raise HTTPException(status_code=422, detail="Inclua pelo menos uma correção.")
+    for item in payload.corrections:
+        if not item.title.strip():
+            raise HTTPException(status_code=422, detail="Toda correção precisa de um título.")
+        session.add(VideoCorrection(submission_id=v.id, **item.model_dump()))
+    v.status = "corrigido"
+    v.corrected_at = _now()
+    v.acknowledged_at = None  # correção nova → aparece de novo pro atleta
+    session.add(v)
+    session.commit()
+    session.refresh(v)
+    return _video_out(session, v, athlete.name)
+
+
+# ============================================================
+# Coach — plano do atleta
+# ============================================================
+@router.get("/coach/athletes/{athlete_id}/plan", response_model=Optional[PlanOut])
+def coach_get_plan(
+    athlete_id: int,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    _owned_athlete(session, coach, athlete_id)
+    p = session.exec(select(AthletePlan).where(AthletePlan.athlete_id == athlete_id)).first()
+    return _plan_out(p) if p else None
+
+
+@router.put("/coach/athletes/{athlete_id}/plan", response_model=PlanOut)
+def coach_set_plan(
+    athlete_id: int,
+    payload: PlanIn,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    _owned_athlete(session, coach, athlete_id)
+    p = session.exec(select(AthletePlan).where(AthletePlan.athlete_id == athlete_id)).first()
+    if p is None:
+        p = AthletePlan(athlete_id=athlete_id, plan_name=payload.plan_name)
+    p.plan_name = payload.plan_name.strip()
+    p.months_total = payload.months_total
+    p.monthly_price = payload.monthly_price
+    p.show_price_to_athlete = payload.show_price_to_athlete
+    if payload.start_date:
+        p.start_date = payload.start_date
+    p.notes = payload.notes
+    p.updated_at = _now()
+    session.add(p)
+    session.commit()
+    session.refresh(p)
+    return _plan_out(p)
