@@ -272,6 +272,65 @@ def athlete_list_checkins(
 # ============================================================
 # Atleta — vídeos e correções
 # ============================================================
+class UploadUrlIn(SQLModel):
+    filename: Optional[str] = None  # ex.: "agachamento.mov" (só pra extensão)
+    content_type: str = "video/mp4"
+    size_bytes: Optional[int] = None
+
+
+class UploadUrlOut(SQLModel):
+    put_url: str
+    public_url: str
+    key: str
+    expires_in: int
+    max_bytes: int
+
+
+@router.post("/athlete/videos/upload-url", response_model=UploadUrlOut)
+def athlete_video_upload_url(
+    payload: UploadUrlIn,
+    athlete: User = Depends(require_role("athlete")),
+):
+    """Gera URL pre-assinada pro app subir vídeo direto pro R2.
+
+    O app:
+      1. Chama este endpoint
+      2. Faz PUT no `put_url` com o arquivo binário no body (header
+         Content-Type igual ao enviado aqui)
+      3. Depois chama POST /athlete/videos com `public_url` como `video_url`
+    """
+    from config import VIDEO_MAX_MB
+    from services.storage import (
+        is_r2_configured,
+        make_video_key,
+        presigned_put_url,
+        public_url_for,
+    )
+
+    if not is_r2_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Upload de vídeo temporariamente indisponível. Avise o admin.",
+        )
+
+    max_bytes = VIDEO_MAX_MB * 1024 * 1024
+    if payload.size_bytes is not None and payload.size_bytes > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Vídeo passa de {VIDEO_MAX_MB} MB. Comprime ou corta e tenta de novo.",
+        )
+
+    key = make_video_key(athlete.id, payload.filename)
+    put_url = presigned_put_url(key, content_type=payload.content_type, expires_in=300)
+    return UploadUrlOut(
+        put_url=put_url,
+        public_url=public_url_for(key),
+        key=key,
+        expires_in=300,
+        max_bytes=max_bytes,
+    )
+
+
 @router.post("/athlete/videos", response_model=VideoOut)
 def athlete_send_video(
     payload: VideoIn,

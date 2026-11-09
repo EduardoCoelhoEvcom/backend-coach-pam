@@ -85,3 +85,20 @@ ALERT_EMAIL_FROM = os.getenv("ALERT_EMAIL_FROM", "") or SMTP_USER
 # enviar, então usa um nome único e difícil de adivinhar.
 NTFY_SERVER = os.getenv("NTFY_SERVER", "https://ntfy.sh")
 NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
+
+# ---- Object storage (Cloudflare R2) ----
+# Usado para upload de vídeos de exercício pelos atletas, sem passar
+# pelo backend (o Vercel tem limite de 4.5 MB por request). O backend
+# só gera URLs pre-assinadas; o cliente faz PUT direto no R2.
+R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", "")
+R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
+R2_BUCKET = os.getenv("R2_BUCKET", "")
+R2_ENDPOINT = os.getenv(
+    "R2_ENDPOINT",
+    f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com" if R2_ACCOUNT_ID else "",
+)
+# URL pública do bucket (pub-xxx.r2.dev ou domínio custom).
+R2_PUBLIC_URL = os.getenv("R2_PUBLIC_URL", "")
+# Limite por vídeo (MB). Validado antes do upload.
+VIDEO_MAX_MB = int(os.getenv("VIDEO_MAX_MB", "100"))

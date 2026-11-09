@@ -33,6 +33,9 @@ slowapi==0.1.9
 # --- Leitura de planilhas Excel (importação de planilhas da coach) ---
 openpyxl==3.1.5
 
+# --- Object storage (Cloudflare R2 via API S3-compatível) ---
+boto3==1.35.84
+
 # --- Testes ---
 pytest==9.0.3
 httpx==0.28.1
