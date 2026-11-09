@@ -16,6 +16,7 @@ from services.email import send_email
 from models import (
     AthleteExerciseRMHistory,
     AthletePlan,
+    CoachNote,
     InitialDiagnosis,
     MobilityCompletion,
     MobilityItem,
@@ -524,6 +525,11 @@ def _delete_feedback_data(session: Session, user_id: int) -> None:
         session.delete(row)
     session.flush()
     for row in items:
+        session.delete(row)
+    # Notas privadas da coach sobre o atleta (ou escritas pela coach que sai).
+    for row in session.exec(
+        select(CoachNote).where((CoachNote.athlete_id == user_id) | (CoachNote.coach_id == user_id))
+    ).all():
         session.delete(row)
     for model in (InitialDiagnosis, TrainingGoal):
         for row in session.exec(select(model).where(model.athlete_id == user_id)).all():

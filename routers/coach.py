@@ -391,6 +391,7 @@ def coach_get_athlete_exercise_rms(
                 type=e.type,
                 rm_value=rm_value,
                 effective_date=eff,
+                rm_source_exercise_id=e.rm_source_exercise_id,
             )
         )
 
