@@ -298,19 +298,26 @@ def _append_series(ex: dict, pct_val, sr_parsed) -> None:
 
 
 # =========================================================================
-# Formato 2: "DIA N" + "Base do %"
+# Formato 2: "DIA N" / "TREINO N" + "Base do %"
 #
-#   DIA 1
-#   #1  Back Squat na caixa        | SEMANA 1 | ... | SEMANA 4 | Observações
+#   TREINO 1 — JERK & CLEAN            (ou "DIA 1")
+#   AQUECIMENTO · 2 rounds             | ... | Observações
+#   Isometric Back Extension (GHD) | 20" | ... | Peito alto na isometria.
+#   #1  Jerk Drive                     | SEMANA 1 | ... | SEMANA 4 | Observações
 #   Exercício | Base do % | RM | %  | kg | Séries | % | kg | Séries | ...
-#   Back Squat na caixa | Back Squat | | 0.75 | — | 3x5 | 0.8 | ...
-#   (ou várias linhas "Série 1/2/3" = ondas)
+#   Jerk Drive | Split Jerk | 97 | 0.8 | 77,6 | 3x3 | 0.9 | ...
 #
 # "Base do %" = movimento cujo RM é usado no cálculo do kg.
+# Blocos "#2 Nome · 1/3", "#2 Nome · 2/3", "#2 Nome · 3/3" viram UM exercício
+# com 3 faixas de carga (feitas em sequência).
+# Séries aceitas: "3x3", "2x 2+1" (2 séries de 1 rep de complexo),
+# "4 rounds · SC 70%", "EMOM 4' · 2 reps", "2 rounds", "6 reps". O que vem
+# depois de "·" e não é contagem vira observação daquela semana.
 # =========================================================================
 
-_DAY_RE = re.compile(r"^\s*dia\s*(\d+)\b", re.IGNORECASE)
+_DAY_RE = re.compile(r"^\s*(?:dia|treino)\s*(\d+)\b", re.IGNORECASE)
 _EX_HEADER_RE = re.compile(r"^\s*#\s*\d+\s*(.*)$")
+_PART_RE = re.compile(r"\s*·\s*(\d+)\s*/\s*(\d+)\s*$")
 
 # Qual dia da semana recebe cada "DIA N", conforme quantos dias o ciclo tem.
 DEFAULT_DAY_SLOTS = {
@@ -323,6 +330,54 @@ DEFAULT_DAY_SLOTS = {
     7: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
 }
 _WEEK_ORDER = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
+def parse_series_cell(v) -> Optional[tuple]:
+    """Célula "Séries" → (séries, reps, observação extra ou None).
+
+    '3x3' -> (3, 3) · '2x 2+1' -> (2, 1) · '4 rounds · SC 70%' -> (4, 1, 'SC 70%')
+    'EMOM 4\\' · 2 reps' -> (4, 2, "EMOM 4'") · '2 rounds' -> (2, 1) · '6 reps' -> (1, 6)
+    """
+    if v is None:
+        return None
+    text = str(v).strip()
+    if not text:
+        return None
+    parts = [p.strip() for p in re.split(r"\s*·\s*", text) if p.strip()]
+    main = parts[0].lower()
+    extras = parts[1:]
+    sets = reps = None
+    note_extra: List[str] = []
+
+    m = re.fullmatch(r"(\d+)\s*x\s*(\d+)", main)
+    if m:
+        sets, reps = int(m.group(1)), int(m.group(2))
+    elif re.fullmatch(r"(\d+)\s*x\s*\d+(?:\s*\+\s*\d+)+", main):
+        # "2x 2+1": cada rep é o complexo inteiro
+        sets, reps = int(re.match(r"\d+", main).group(0)), 1
+    else:
+        m = re.fullmatch(r"(\d+)\s*(?:rounds?|rodadas?|s[ée]ries?)", main)
+        if m:
+            sets, reps = int(m.group(1)), 1
+        else:
+            m = re.fullmatch(r"emom\s*(\d+)\s*['’]?", main)
+            if m:
+                sets, reps = int(m.group(1)), 1
+                note_extra.append(parts[0])
+            else:
+                m = re.fullmatch(r"(\d+)\s*reps?", main)
+                if m:
+                    sets, reps = 1, int(m.group(1))
+    if sets is None:
+        return None
+
+    for e in extras:
+        m = re.fullmatch(r"(\d+)\s*reps?", e.lower())
+        if m and reps == 1:
+            reps = int(m.group(1))  # "EMOM 4' · 2 reps"
+        else:
+            note_extra.append(e)
+    return sets, reps, " · ".join(note_extra) or None
 
 
 def is_dia_format(ws) -> bool:
@@ -341,11 +396,19 @@ def is_dia_format(ws) -> bool:
     return False
 
 
+def _notes_col(ws, r: int) -> Optional[int]:
+    for c in range(2, ws.max_column + 1):
+        if _strip_accents_lower(_clean_text(ws.cell(row=r, column=c).value)).startswith("observa"):
+            return c
+    return None
+
+
 def parse_sheet_dias(ws, day_slots: Optional[List[str]] = None) -> dict:
-    """Parseia o formato 'DIA N' + 'Base do %'."""
-    days: List[dict] = []          # [{"n": 1, "exercises": [...]}]
+    """Parseia o formato 'DIA N' / 'TREINO N' + 'Base do %'."""
+    days: List[dict] = []          # [{"n": 1, "exercises": [...], "warmup": [...]}]
     cur_day = None
     cur_ex = None
+    warmup = None                  # {"title":..., "notes_col":...} enquanto lê o aquecimento
     week_cols: List[int] = []      # coluna do % de cada semana
     notes_col: Optional[int] = None
     base_col = 2
@@ -355,14 +418,35 @@ def parse_sheet_dias(ws, day_slots: Optional[List[str]] = None) -> dict:
 
         m_day = _DAY_RE.match(a) if a else None
         if m_day:
-            cur_day = {"n": int(m_day.group(1)), "exercises": []}
+            cur_day = {"n": int(m_day.group(1)), "exercises": [], "warmup": []}
             days.append(cur_day)
             cur_ex = None
+            warmup = None
+            continue
+        if cur_day is None:
             continue
 
+        # ---- aquecimento: vira recado do treino ----
+        if a and _strip_accents_lower(a).startswith("aquecimento"):
+            warmup = {"notes_col": _notes_col(ws, r)}
+            cur_day["warmup"].append(a)
+            cur_ex = None
+            continue
+        if warmup is not None:
+            if not a or _EX_HEADER_RE.match(a):
+                warmup = None  # acabou o aquecimento; segue pro exercício
+            else:
+                presc = _clean_text(ws.cell(row=r, column=2).value)
+                obs = _clean_text(ws.cell(row=r, column=warmup["notes_col"]).value) if warmup["notes_col"] else ""
+                line = f"• {a}" + (f" — {presc}" if presc else "") + (f". {obs}" if obs else "")
+                cur_day["warmup"].append(line)
+                continue
+
         m_ex = _EX_HEADER_RE.match(a) if a else None
-        if m_ex and cur_day is not None:
+        if m_ex:
             title = m_ex.group(1).strip()
+            m_part = _PART_RE.search(title)
+            base_title = _PART_RE.sub("", title).strip() if m_part else title
             week_cols = []
             notes_col = None
             for c in range(2, ws.max_column + 1):
@@ -371,14 +455,23 @@ def parse_sheet_dias(ws, day_slots: Optional[List[str]] = None) -> dict:
                     week_cols.append(c)
                 elif v.startswith("observa"):
                     notes_col = c
-            cur_ex = {
-                "name": title,
-                "is_complex": is_complex_name(title),
-                "rm_base": None,
-                "weeks": [[] for _ in week_cols],
-                "notes": [],
-            }
-            cur_day["exercises"].append(cur_ex)
+            prev = cur_day["exercises"][-1] if cur_day["exercises"] else None
+            if m_part and int(m_part.group(1)) > 1 and prev and prev["block"] == base_title:
+                # "· 2/3", "· 3/3": continua o mesmo exercício (mais faixas)
+                cur_ex = prev
+                cur_ex["continuation"] = True
+            else:
+                cur_ex = {
+                    "block": base_title,
+                    "name": None,
+                    "header": base_title,
+                    "rm_base": None,
+                    "weeks": [[] for _ in week_cols],
+                    "week_notes": [[] for _ in week_cols],
+                    "notes": [],
+                    "continuation": False,
+                }
+                cur_day["exercises"].append(cur_ex)
             continue
 
         if cur_ex is None or not week_cols:
@@ -394,29 +487,66 @@ def parse_sheet_dias(ws, day_slots: Optional[List[str]] = None) -> dict:
         base = _clean_text(ws.cell(row=r, column=base_col).value)
         if base and not cur_ex["rm_base"]:
             cur_ex["rm_base"] = base
+        if a and not cur_ex["name"]:
+            cur_ex["name"] = a
 
         any_data = False
         for wi, pc in enumerate(week_cols):
+            if wi >= len(cur_ex["weeks"]):
+                break
             pct_val = pct_to_int(ws.cell(row=r, column=pc).value)
-            sr = parse_sr(ws.cell(row=r, column=pc + 2).value)
+            sr = parse_series_cell(ws.cell(row=r, column=pc + 2).value)
             if pct_val is None and sr is None:
                 continue
             any_data = True
-            sets, reps = sr if sr else (1, 1)
+            sets, reps, extra = sr if sr else (1, 1, None)
             for _ in range(sets):
                 cur_ex["weeks"][wi].append({
                     "reps": reps,
                     "percent": pct_val if pct_val is not None else 0,
                 })
+            if extra and extra not in cur_ex["week_notes"][wi]:
+                cur_ex["week_notes"][wi].append(extra)
 
         if notes_col:
             note = _clean_text(ws.cell(row=r, column=notes_col).value)
-            if note:
-                cur_ex["notes"].append(note)
+            # Nas linhas de continuação ("Segue na sequência...") a nota repete a primeira.
+            if note and not (cur_ex["continuation"] and _strip_accents_lower(note).startswith("segue na sequencia")):
+                if note not in cur_ex["notes"]:
+                    cur_ex["notes"].append(note)
 
         if not any_data and not base and not a:
             # linha vazia encerra o bloco do exercício
             cur_ex = None
+
+    # ---- nome de cada exercício ----
+    for d in days:
+        for ex in d["exercises"]:
+            row_name = ex["name"] or ex["header"]
+            has_pct = any(s["percent"] for w in ex["weeks"] for s in w)
+            if not has_pct and ex["header"] and row_name != ex["header"]:
+                # Sem % (ex.: posição com barra vazia): o título do bloco é o nome,
+                # e a descrição da linha vira observação.
+                ex["notes"].insert(0, row_name)
+                ex["name"] = ex["header"]
+            else:
+                ex["name"] = row_name
+                # "A cada 2'30" por 4 rounds · Clean Hold + Squat Clean": o que vem
+                # antes do último "·" é informação de execução.
+                segs = [s.strip() for s in re.split(r"\s*·\s*", ex["header"] or "") if s.strip()]
+                extra = " · ".join(segs[:-1])
+                low = _strip_accents_lower
+                # Só entra se a observação da coach ainda não diz a mesma coisa.
+                if extra and not any(low(extra) in low(n) for n in ex["notes"]):
+                    ex["notes"].insert(0, extra)
+            # Detalhe igual em todas as semanas (ex.: "EMOM 4'") vira observação fixa.
+            filled = [w for w in ex["week_notes"] if w]
+            if filled and len(filled) == len([w for w in ex["weeks"] if w]) and all(w == filled[0] for w in filled):
+                for n in filled[0]:
+                    if n not in ex["notes"]:
+                        ex["notes"].append(n)
+                ex["week_notes"] = [[] for _ in ex["week_notes"]]
+            ex["is_complex"] = is_complex_name(ex["name"])
 
     # ---- monta o plano no formato do app ----
     n_weeks = max((len(ex["weeks"]) for d in days for ex in d["exercises"]), default=0)
@@ -433,7 +563,7 @@ def parse_sheet_dias(ws, day_slots: Optional[List[str]] = None) -> dict:
                                  "lpo_exercises": [], "accessories": []})
                 continue
             lpo = []
-            notes = []
+            notes = list(day["warmup"])
             for ex in day["exercises"]:
                 series = ex["weeks"][wi] if wi < len(ex["weeks"]) else []
                 if not series:
@@ -446,6 +576,8 @@ def parse_sheet_dias(ws, day_slots: Optional[List[str]] = None) -> dict:
                 })
                 for n in ex["notes"]:
                     notes.append(f"{ex['name']}: {n}")
+                for n in (ex["week_notes"][wi] if wi < len(ex["week_notes"]) else []):
+                    notes.append(f"{ex['name']}: Nesta semana: {n}")
             days_out.append({"day": slug, "rest": False, "coach_notes": "\n".join(notes),
                              "lpo_exercises": lpo, "accessories": []})
         weeks_out.append({"week_number": wi + 1, "days": days_out})
@@ -461,14 +593,14 @@ def parse_sheet_dias(ws, day_slots: Optional[List[str]] = None) -> dict:
             if ex["rm_base"] and ex["rm_base"] not in bases:
                 bases.append(ex["rm_base"])
 
-    title = ""
-    for r in range(1, 4):
-        v = _clean_text(ws.cell(row=r, column=1).value)
-        if v:
-            title = v if not title else f"{title} · {v}" if "ciclo" in _strip_accents_lower(v) else title
+    # Título: a linha do topo que fala do plano/ciclo; senão a primeira.
+    top = [_clean_text(ws.cell(row=r, column=1).value) for r in range(1, 4)]
+    top = [t for t in top if t]
+    title = next((t for t in top if any(k in _strip_accents_lower(t) for k in ("plano", "ciclo", "semanas"))), None)
+    title = title or (top[0] if top else ws.title)
     return {
         "name": ws.title,
-        "title": title or ws.title,
+        "title": title,
         "athletes": [],
         "weeks": n_weeks,
         "plan": {"weeks": weeks_out},
