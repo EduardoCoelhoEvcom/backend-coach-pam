@@ -95,3 +95,24 @@ def public_url_for(key: str) -> str:
     """URL pública (via R2.dev subdomain) pra tocar/baixar o arquivo."""
     base = R2_PUBLIC_URL.rstrip("/")
     return f"{base}/{key}"
+
+# Tipos de áudio que o app grava (navegador: webm/ogg; iPhone: mp4/m4a).
+AUDIO_EXT_BY_TYPE = {
+    "audio/webm": "webm",
+    "audio/ogg": "ogg",
+    "audio/mp4": "m4a",
+    "audio/m4a": "m4a",
+    "audio/x-m4a": "m4a",
+    "audio/aac": "aac",
+    "audio/mpeg": "mp3",
+    "audio/wav": "wav",
+    "audio/x-wav": "wav",
+}
+
+
+def make_audio_key(coach_id: int, content_type: str) -> str:
+    """Chave do áudio de correção da coach (ID aleatório, impossível de adivinhar)."""
+    base_type = (content_type or "").split(";")[0].strip().lower()
+    ext = AUDIO_EXT_BY_TYPE.get(base_type, "webm")
+    rand = secrets.token_urlsafe(16)
+    return f"audios/{coach_id}/{rand}.{ext}"

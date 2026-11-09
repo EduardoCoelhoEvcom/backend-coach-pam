@@ -491,6 +491,54 @@ def coach_mark_checkin_seen(
 # ============================================================
 # Coach — vídeos
 # ============================================================
+@router.post("/coach/audio/upload-url", response_model=UploadUrlOut)
+def coach_audio_upload_url(
+    payload: UploadUrlIn,
+    coach: User = Depends(require_role("coach")),
+):
+    """URL pre-assinada pra coach subir o áudio da correção direto pro R2.
+
+    Mesmo fluxo do vídeo do atleta: o app faz PUT no `put_url` com o áudio
+    (Content-Type igual ao enviado aqui) e manda o `public_url` como
+    `audio_url` em POST /coach/videos/{id}/corrections.
+    """
+    from config import AUDIO_MAX_MB
+    from services.storage import (
+        AUDIO_EXT_BY_TYPE,
+        is_r2_configured,
+        make_audio_key,
+        presigned_put_url,
+        public_url_for,
+    )
+
+    base_type = (payload.content_type or "").split(";")[0].strip().lower()
+    if base_type not in AUDIO_EXT_BY_TYPE:
+        raise HTTPException(status_code=422, detail="Formato de áudio não aceito.")
+    if not is_r2_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Envio de áudio temporariamente indisponível. Avise o admin.",
+        )
+    max_bytes = AUDIO_MAX_MB * 1024 * 1024
+    if payload.size_bytes is not None and payload.size_bytes > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Áudio passa de {AUDIO_MAX_MB} MB. Grava um áudio mais curto.",
+        )
+    key = make_audio_key(coach.id, base_type)
+    put_url = presigned_put_url(key, content_type=base_type, expires_in=300)
+    return UploadUrlOut(
+        put_url=put_url,
+        public_url=public_url_for(key),
+        key=key,
+        expires_in=300,
+        max_bytes=max_bytes,
+    )
+
+
+# ============================================================
+# Coach — fila de vídeos
+# ============================================================
 @router.get("/coach/videos", response_model=List[VideoOut])
 def coach_list_videos(
     status: Optional[str] = Query(default="pendente"),
