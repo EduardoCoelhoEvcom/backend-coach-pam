@@ -307,6 +307,14 @@ def _append_series(ex: dict, pct_val, sr_parsed) -> None:
 #   Exercício | Base do % | RM | %  | kg | Séries | % | kg | Séries | ...
 #   Jerk Drive | Split Jerk | 97 | 0.8 | 77,6 | 3x3 | 0.9 | ...
 #
+#   TÉCNICOS                           | Volume | Observações | Vídeo
+#   Tall power clean | 3x6 | Barra vazia. | https://youtube.com/...
+#   ACESSÓRIOS                         | Séries | Observações
+#   Face pull (polia ou band) | 2x8-10 |
+#
+# "TÉCNICOS" (aquecimento neural, barra vazia) e "ACESSÓRIOS" valem para todas
+# as semanas. Técnico: nome | volume em texto | como fazer | link do vídeo.
+# Acessório: nome | séries ("2x10", "2x8-10", "2x10/10" = cada lado).
 # "Base do %" = movimento cujo RM é usado no cálculo do kg.
 # Blocos "#2 Nome · 1/3", "#2 Nome · 2/3", "#2 Nome · 3/3" viram UM exercício
 # com 3 faixas de carga (feitas em sequência).
@@ -380,6 +388,50 @@ def parse_series_cell(v) -> Optional[tuple]:
     return sets, reps, " · ".join(note_extra) or None
 
 
+_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+
+
+def _section_of(text: str) -> Optional[str]:
+    """Cabeçalho de bloco sem carga: 'aquecimento', 'tecnicos' ou 'acessorios'."""
+    t = _strip_accents_lower(text).strip()
+    if t.startswith("aquecimento"):
+        return "aquecimento"
+    if t.startswith("tecnico"):
+        return "tecnicos"
+    if t.startswith("acessorio"):
+        return "acessorios"
+    return None
+
+
+def parse_accessory_series(v) -> tuple:
+    """'2x10' -> (2, 10, None) · '2x8-10' -> (2, 10, '8 a 10 reps')
+    · '2x10/10' -> (2, 10, '10 de cada lado'). Sem formato: (1, 1, texto)."""
+    text = _clean_text(v)
+    m = re.fullmatch(
+        r"(\d+)\s*x\s*(\d+)(?:\s*(?:-|a|–)\s*(\d+))?(?:\s*/\s*(\d+))?\s*(.*)",
+        text,
+        re.IGNORECASE,
+    )
+    if not m:
+        return 1, 1, (text or None)
+    sets, low, high, side, rest = m.groups()
+    notes = []
+    if high:
+        notes.append(f"{low} a {high} reps")
+    if side:
+        notes.append(f"{side} de cada lado")
+    if rest.strip():
+        notes.append(rest.strip())
+    return int(sets), int(high or low), " · ".join(notes) or None
+
+
+def _row_has_week_header(ws, r: int) -> bool:
+    return any(
+        _strip_accents_lower(_clean_text(ws.cell(row=r, column=c).value)).startswith("semana")
+        for c in range(2, ws.max_column + 1)
+    )
+
+
 def is_dia_format(ws) -> bool:
     has_dia = has_base = False
     for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 80), max_col=min(ws.max_column, 6)):
@@ -418,7 +470,8 @@ def parse_sheet_dias(ws, day_slots: Optional[List[str]] = None) -> dict:
 
         m_day = _DAY_RE.match(a) if a else None
         if m_day:
-            cur_day = {"n": int(m_day.group(1)), "exercises": [], "warmup": []}
+            cur_day = {"n": int(m_day.group(1)), "exercises": [], "warmup": [],
+                       "technical": [], "accessories": []}
             days.append(cur_day)
             cur_ex = None
             warmup = None
@@ -426,20 +479,50 @@ def parse_sheet_dias(ws, day_slots: Optional[List[str]] = None) -> dict:
         if cur_day is None:
             continue
 
-        # ---- aquecimento: vira recado do treino ----
-        if a and _strip_accents_lower(a).startswith("aquecimento"):
-            warmup = {"notes_col": _notes_col(ws, r)}
-            cur_day["warmup"].append(a)
+        # ---- blocos sem carga: aquecimento (vira recado), técnicos e acessórios ----
+        section = _section_of(a) if a else None
+        if section:
+            warmup = {"kind": section, "notes_col": _notes_col(ws, r)}
+            if section == "aquecimento":
+                cur_day["warmup"].append(a)
             cur_ex = None
             continue
         if warmup is not None:
-            if not a or _EX_HEADER_RE.match(a):
-                warmup = None  # acabou o aquecimento; segue pro exercício
+            is_lpo_header = bool(a and _EX_HEADER_RE.match(a) and _row_has_week_header(ws, r))
+            if not a or is_lpo_header:
+                warmup = None  # acabou o bloco; segue pro exercício
             else:
                 presc = _clean_text(ws.cell(row=r, column=2).value)
                 obs = _clean_text(ws.cell(row=r, column=warmup["notes_col"]).value) if warmup["notes_col"] else ""
-                line = f"• {a}" + (f" — {presc}" if presc else "") + (f". {obs}" if obs else "")
-                cur_day["warmup"].append(line)
+                kind = warmup["kind"]
+                if kind == "aquecimento":
+                    line = f"• {a}" + (f" — {presc}" if presc else "") + (f". {obs}" if obs else "")
+                    cur_day["warmup"].append(line)
+                elif kind == "tecnicos":
+                    m_num = _EX_HEADER_RE.match(a)  # '#1 2" PAUSAS' -> '2" PAUSAS'
+                    name = m_num.group(1).strip() if m_num else a
+                    video = None
+                    for c in range(2, ws.max_column + 1):
+                        m_url = _URL_RE.search(_clean_text(ws.cell(row=r, column=c).value))
+                        if m_url:
+                            video = m_url.group(0)
+                            break
+                    if video and obs:
+                        obs = _URL_RE.sub("", obs).strip()
+                    cur_day["technical"].append({
+                        "name": name,
+                        "prescription": presc or None,
+                        "instructions": obs or None,
+                        "video_url": video,
+                    })
+                else:  # acessorios
+                    sets, reps, extra = parse_accessory_series(presc)
+                    cur_day["accessories"].append({
+                        "name": a,
+                        "allow_weight_input": True,
+                        "series": [{"reps": reps} for _ in range(sets)],
+                        "notes": [n for n in (extra, obs) if n],
+                    })
                 continue
 
         m_ex = _EX_HEADER_RE.match(a) if a else None
@@ -559,7 +642,7 @@ def parse_sheet_dias(ws, day_slots: Optional[List[str]] = None) -> dict:
         for slug in _WEEK_ORDER:
             day = next((d for d in days if slot_by_n.get(d["n"]) == slug), None)
             if day is None:
-                days_out.append({"day": slug, "rest": True, "coach_notes": "",
+                days_out.append({"day": slug, "rest": True, "coach_notes": "", "technical": [],
                                  "lpo_exercises": [], "accessories": []})
                 continue
             lpo = []
@@ -578,8 +661,18 @@ def parse_sheet_dias(ws, day_slots: Optional[List[str]] = None) -> dict:
                     notes.append(f"{ex['name']}: {n}")
                 for n in (ex["week_notes"][wi] if wi < len(ex["week_notes"]) else []):
                     notes.append(f"{ex['name']}: Nesta semana: {n}")
+            accessories = []
+            for ax in day["accessories"]:
+                accessories.append({
+                    "name": ax["name"],
+                    "allow_weight_input": ax["allow_weight_input"],
+                    "series": [dict(s) for s in ax["series"]],
+                })
+                for n in ax["notes"]:
+                    notes.append(f"{ax['name']}: {n}")
             days_out.append({"day": slug, "rest": False, "coach_notes": "\n".join(notes),
-                             "lpo_exercises": lpo, "accessories": []})
+                             "technical": [dict(t) for t in day["technical"]],
+                             "lpo_exercises": lpo, "accessories": accessories})
         weeks_out.append({"week_number": wi + 1, "days": days_out})
 
     names = []
