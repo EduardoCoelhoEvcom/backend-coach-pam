@@ -27,6 +27,7 @@ from models import (
     WeeklyCheckin,
 )
 from security import require_role
+from services.clock import br_date_of, today_br
 
 router = APIRouter(tags=["coach-overview"])
 
@@ -151,7 +152,7 @@ def coach_overview(
     session: Session = Depends(get_session),
     coach: User = Depends(require_role("coach")),
 ):
-    today = date.today()
+    today = today_br()
     week = _monday(today)
     athletes = session.exec(
         select(User).where(User.role == "athlete", User.coach_id == coach.id).order_by(User.name)
@@ -243,7 +244,7 @@ def coach_overview(
             last_training=last,
             days_without_training=(today - last).days if last else None,
             trained_today=last == today,
-            video_today=any(v.created_at.date() == today for v in mine_videos if v.created_at),
+            video_today=any(br_date_of(v.created_at) == today for v in mine_videos if v.created_at),
             videos_pending=sum(1 for v in mine_videos if v.status == "pendente"),
             checkin=csum,
         ))

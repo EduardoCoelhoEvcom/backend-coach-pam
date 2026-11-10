@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 from db import get_session
 from models import TrainingDayCompletion, User
 from security import require_role
+from services.clock import today_br
 
 router = APIRouter(tags=["admin"], prefix="/admin")
 
@@ -41,7 +42,7 @@ def admin_overview(
     athletes = [u for u in users if u.role == "athlete"]
     admins = [u for u in users if u.role == "admin"]
 
-    today = date.today()
+    today = today_br()
 
     # ---- Resumo de pagamento (atletas) ----
     pay_counts: dict = {}
