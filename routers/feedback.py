@@ -36,6 +36,7 @@ from models import (
     WeeklyCheckin,
 )
 from security import require_role
+from services.clock import today_br
 
 router = APIRouter(tags=["feedback"])
 
@@ -208,7 +209,7 @@ def athlete_current_checkin(
     session: Session = Depends(get_session),
     athlete: User = Depends(require_role("athlete")),
 ):
-    week = _monday(date.today())
+    week = _monday(today_br())
     c = session.exec(
         select(WeeklyCheckin).where(
             WeeklyCheckin.athlete_id == athlete.id, WeeklyCheckin.week_start == week
@@ -227,7 +228,7 @@ def athlete_submit_checkin(
     session: Session = Depends(get_session),
     athlete: User = Depends(require_role("athlete")),
 ):
-    week = _monday(date.today())
+    week = _monday(today_br())
     c = session.exec(
         select(WeeklyCheckin).where(
             WeeklyCheckin.athlete_id == athlete.id, WeeklyCheckin.week_start == week
@@ -418,7 +419,7 @@ def athlete_get_plan(
 
 
 def _plan_out(p: AthletePlan) -> PlanOut:
-    current = max(1, _months_between(p.start_date, date.today()) + 1)
+    current = max(1, _months_between(p.start_date, today_br()) + 1)
     if p.months_total:
         current = min(current, p.months_total)
     return PlanOut(
@@ -440,7 +441,7 @@ def coach_list_checkins(
     session: Session = Depends(get_session),
     coach: User = Depends(require_role("coach")),
 ):
-    week = _monday(week_start or date.today())
+    week = _monday(week_start or today_br())
     athletes = session.exec(
         select(User).where(User.role == "athlete", User.coach_id == coach.id)
     ).all()

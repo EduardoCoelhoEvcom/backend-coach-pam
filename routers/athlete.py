@@ -43,6 +43,7 @@ from schemas import (
 )
 from security import require_role
 from services.training_plan import normalize_plan_for_sheet
+from services.clock import today_br
 
 router = APIRouter(tags=["athlete"])
 
@@ -65,7 +66,7 @@ def _compute_athlete_progress(
             streak_days=0,
         )
 
-    today = date.today()
+    today = today_br()
     dates = {c.date_completed for c in completions}
     completed_today = today in dates
 
@@ -269,7 +270,7 @@ def athlete_training_sheets(
     athlete: User = Depends(require_role("athlete")),
     session: Session = Depends(get_session),
 ):
-    today = date.today()
+    today = today_br()
     visible_until = today + timedelta(days=2)
 
     stmt = (
@@ -392,7 +393,7 @@ def save_day_execution(
             detail="Planilha não encontrada para este atleta.",
         )
 
-    today = date.today()
+    today = today_br()
 
     # apaga execuções do dia (idempotente)
     stmt = select(TrainingSetExecution).where(
@@ -469,7 +470,7 @@ async def complete_day(
             detail="Planilha não encontrada para este atleta.",
         )
 
-    today = date.today()
+    today = today_br()
 
     # 1) se vier sets → sobrescreve as execuções de HOJE pra esse sheet/semana/dia
     if body.sets is not None:

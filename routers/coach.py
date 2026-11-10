@@ -46,6 +46,7 @@ from schemas import (
     TrainingSheetRead,
 )
 from security import get_password_hash, require_role
+from services.clock import today_br
 from services.training_plan import (
     build_default_plan,
     compute_end_date,
@@ -170,7 +171,7 @@ def create_athlete_for_coach(
             raise HTTPException(status_code=422, detail="Plano inválido.")
 
     temp_password = payload.password or _generate_athlete_password()
-    start = payload.start_date or date.today()
+    start = payload.start_date or today_br()
     user = User(
         name=name,
         email=payload.email.strip().lower(),
@@ -406,7 +407,7 @@ def coach_dashboard(
     session: Session = Depends(get_session),
     coach: User = Depends(require_role("coach")),
 ):
-    today = date.today()
+    today = today_br()
 
     athletes_total = session.exec(
         select(func.count(func.distinct(TrainingSheet.athlete_id)))

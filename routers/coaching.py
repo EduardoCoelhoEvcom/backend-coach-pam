@@ -34,6 +34,7 @@ from sqlmodel import Session, SQLModel, select
 from db import get_session
 from models import InitialDiagnosis, MobilityCompletion, MobilityItem, TrainingGoal, User
 from security import require_role
+from services.clock import today_br
 
 router = APIRouter(tags=["coaching"])
 
@@ -158,7 +159,7 @@ def athlete_list_mobility(
     session: Session = Depends(get_session),
     athlete: User = Depends(require_role("athlete")),
 ):
-    day = day or date.today()
+    day = day or today_br()
     items = _items_of(session, athlete.id)
     done_ids = set(
         session.exec(
@@ -189,7 +190,7 @@ def athlete_mark_mobility(
     athlete: User = Depends(require_role("athlete")),
 ):
     item = _my_item(session, athlete, item_id)
-    day = (payload.day if payload else None) or date.today()
+    day = (payload.day if payload else None) or today_br()
     exists = session.exec(
         select(MobilityCompletion).where(
             MobilityCompletion.item_id == item.id,
@@ -210,7 +211,7 @@ def athlete_unmark_mobility(
     athlete: User = Depends(require_role("athlete")),
 ):
     item = _my_item(session, athlete, item_id)
-    day = day or date.today()
+    day = day or today_br()
     for row in session.exec(
         select(MobilityCompletion).where(
             MobilityCompletion.item_id == item.id,
