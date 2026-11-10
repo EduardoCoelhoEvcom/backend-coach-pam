@@ -710,6 +710,39 @@ def duplicate_training_sheet(
     return new_sheet
 
 
+@router.delete("/coach/training-sheets/{sheet_id}/executions")
+def coach_reset_day_executions(
+    sheet_id: int,
+    week_number: int,
+    day: str,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    """Apaga as execuções de um dia específico (zera o treino).
+
+    Útil quando o atleta quer recomeçar o treino que ficou "em andamento".
+    Só o coach dono da planilha pode zerar.
+    """
+    sheet = session.get(TrainingSheet, sheet_id)
+    if not sheet:
+        raise HTTPException(status_code=404, detail="Planilha não encontrada")
+    if sheet.coach_id != coach.id:
+        raise HTTPException(status_code=403, detail="Acesso negado a esta planilha")
+
+    rows = session.exec(
+        select(TrainingSetExecution).where(
+            TrainingSetExecution.training_sheet_id == sheet_id,
+            TrainingSetExecution.week_number == week_number,
+            TrainingSetExecution.day == day,
+        )
+    ).all()
+    deleted = len(rows)
+    for r in rows:
+        session.delete(r)
+    session.commit()
+    return {"ok": True, "deleted": deleted, "week_number": week_number, "day": day}
+
+
 @router.get(
     "/coach/training-sheets/{sheet_id}/executions",
     response_model=List[SetExecutionOut],
