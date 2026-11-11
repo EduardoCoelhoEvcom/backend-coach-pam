@@ -119,6 +119,34 @@ class CorrectionIn(SQLModel):
     audio_url: Optional[str] = None
     audio_duration_sec: Optional[float] = None
     is_focus: bool = False
+    drawing: Optional[list] = None
+
+
+_SHAPES = {"line", "circle", "free", "arrow"}
+
+
+def _clean_drawing(raw) -> Optional[list]:
+    """Aceita só formas conhecidas, com pontos entre 0 e 1 (limita tamanho)."""
+    if not isinstance(raw, list):
+        return None
+    out = []
+    for sh in raw[:40]:
+        if not isinstance(sh, dict) or sh.get("t") not in _SHAPES:
+            continue
+        pts = []
+        for p in (sh.get("p") or [])[:400]:
+            try:
+                x, y = float(p[0]), float(p[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            pts.append([round(min(1.0, max(0.0, x)), 4), round(min(1.0, max(0.0, y)), 4)])
+        if len(pts) < 2:
+            continue
+        color = str(sh.get("c") or "#FF4D4D")[:9]
+        if not color.startswith("#"):
+            color = "#FF4D4D"
+        out.append({"t": sh["t"], "c": color, "p": pts})
+    return out or None
 
 
 class CorrectionsIn(SQLModel):
@@ -577,7 +605,9 @@ def coach_send_corrections(
     for item in payload.corrections:
         if not item.title.strip():
             raise HTTPException(status_code=422, detail="Toda correção precisa de um título.")
-        session.add(VideoCorrection(submission_id=v.id, **item.model_dump()))
+        data = item.model_dump()
+        data["drawing"] = _clean_drawing(data.get("drawing"))
+        session.add(VideoCorrection(submission_id=v.id, **data))
     v.status = "corrigido"
     v.corrected_at = _now()
     v.acknowledged_at = None  # correção nova → aparece de novo pro atleta

@@ -86,6 +86,12 @@ def _ensure_columns() -> None:
                             "ADD COLUMN note VARCHAR"
                         )
                     )
+        # Desenho da coach sobre o vídeo (correção no quadro pausado).
+        if insp.has_table("videocorrection"):
+            vc_cols = {c["name"] for c in insp.get_columns("videocorrection")}
+            if "drawing" not in vc_cols:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE videocorrection ADD COLUMN drawing JSON"))
     except Exception as exc:  # noqa: BLE001 — não derruba o startup por isso
         print(f"[db] _ensure_columns falhou (ignorado): {exc}")
 
