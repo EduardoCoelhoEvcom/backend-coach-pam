@@ -91,11 +91,25 @@ class UserRead(SQLModel):
     must_change_password: bool = False
 
 
-# Planos que a coach escolhe no "+ Novo atleta".
+# Planos que a coach escolhe no "+ Novo atleta" (tabela de preços da Coach Pâm).
+# Valor mensal por frequência; no Experience o Pix tem 5% de desconto no total.
 PLAN_OPTIONS = {
-    "experience": {"plan_name": "Experience", "months_total": 6, "monthly_price": 190.0},
-    "avulso": {"plan_name": "Mês avulso", "months_total": None, "monthly_price": 230.0},
+    "experience": {"plan_name": "Experience", "months_total": 6, "prices": {2: 190.0, 3: 250.0, 5: 370.0}},
+    "avulso": {"plan_name": "Mês avulso", "months_total": None, "prices": {2: 230.0, 3: 310.0, 5: 460.0}},
 }
+
+
+def plan_for(plan: str, frequency: Optional[int]) -> Optional[dict]:
+    """Plano + frequência -> campos do AthletePlan (None se não existir)."""
+    opt = PLAN_OPTIONS.get(plan)
+    freq = frequency or 2  # app antigo não manda a frequência (preço antigo = 2x)
+    if not opt or freq not in opt["prices"]:
+        return None
+    return {
+        "plan_name": f"{opt['plan_name']} · {freq}x na semana" if frequency else opt["plan_name"],
+        "months_total": opt["months_total"],
+        "monthly_price": opt["prices"][freq],
+    }
 
 
 class AthleteCreate(SQLModel):
@@ -105,6 +119,7 @@ class AthleteCreate(SQLModel):
     password: Optional[str] = None
     whatsapp: Optional[str] = None
     plan: Optional[str] = None  # "experience" | "avulso"
+    frequency: Optional[int] = None  # 2 | 3 | 5 treinos por semana
     start_date: Optional[date] = None
 
 
@@ -166,7 +181,7 @@ def create_athlete_for_coach(
         )
     plan = None
     if payload.plan:
-        plan = PLAN_OPTIONS.get(payload.plan)
+        plan = plan_for(payload.plan, payload.frequency)
         if plan is None:
             raise HTTPException(status_code=422, detail="Plano inválido.")
 

@@ -318,6 +318,64 @@ def ensure_rm_inheritance(session: Session) -> None:
         session.commit()
 
 
+def dedupe_global_exercises(session: Session) -> int:
+    """Esconde cópias repetidas de exercícios globais (mesmo nome).
+
+    Vários servidores subindo ao mesmo tempo (Vercel) podiam criar o mesmo
+    exercício duas vezes, e a coach via "Front Squat" duplicado. Fica o
+    principal (fora de "Variações", o mais antigo); a cópia é só desativada,
+    e só se ninguém a usa (RM de atleta ou planilha). Quem herdava RM da
+    cópia passa a herdar do principal. Idempotente; roda no startup.
+    """
+    import json
+
+    from models import AthleteExerciseRMHistory, TrainingSheet
+
+    def norm(s: str) -> str:
+        return " ".join((s or "").strip().lower().split())
+
+    cats = {c.id: c.name for c in session.exec(select(ExerciseCategory)).all()}
+    globals_ = session.exec(
+        select(Exercise).where(Exercise.coach_id == None, Exercise.is_active == True)  # noqa: E711,E712
+    ).all()
+    groups = {}
+    for e in globals_:
+        groups.setdefault((e.type, norm(e.name)), []).append(e)
+    dups = {k: v for k, v in groups.items() if len(v) > 1}
+    if not dups:
+        return 0
+
+    used = {r.exercise_id for r in session.exec(select(AthleteExerciseRMHistory)).all()}
+    for sh in session.exec(select(TrainingSheet)).all():
+        plan = sh.plan if isinstance(sh.plan, dict) else json.loads(sh.plan or "{}")
+        for w in plan.get("weeks") or []:
+            for d in w.get("days") or []:
+                for ex in (d.get("lpo_exercises") or []) + (d.get("accessories") or []):
+                    for k in ("exercise_id", "rm_exercise_id"):
+                        if isinstance(ex.get(k), int):
+                            used.add(ex[k])
+
+    hidden = 0
+    for items in dups.values():
+        items.sort(key=lambda e: (cats.get(e.category_id) == "Variações", e.id))
+        keep, extras = items[0], items[1:]
+        for e in extras:
+            for child in session.exec(select(Exercise).where(Exercise.rm_source_exercise_id == e.id)).all():
+                if child.id != keep.id:
+                    child.rm_source_exercise_id = keep.id
+                    session.add(child)
+            if keep.rm_source_exercise_id is None and e.rm_source_exercise_id not in (None, keep.id):
+                keep.rm_source_exercise_id = e.rm_source_exercise_id
+                session.add(keep)
+            if e.id in used:
+                continue
+            e.is_active = False
+            session.add(e)
+            hidden += 1
+    session.commit()
+    return hidden
+
+
 def seed_default_users(session: Session) -> None:
     """Cria coach@pam.com e atleta@pam.com (senha 123456) se ainda não existirem.
 
@@ -419,6 +477,7 @@ def run_initial_seed() -> None:
         seed_global_library(session)
         ensure_extra_lifts(session)
         ensure_rm_inheritance(session)
+        dedupe_global_exercises(session)
         seed_default_users(session)
         seed_admin_from_env(session)
         backfill_athlete_coach(session)
