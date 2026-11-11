@@ -588,6 +588,62 @@ def coach_send_corrections(
 
 
 # ============================================================
+# Coach — ficha do atleta: histórico de check-ins e exclusões
+# ============================================================
+@router.get("/coach/athletes/{athlete_id}/checkins", response_model=List[CheckinOut])
+def coach_athlete_checkins(
+    athlete_id: int,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    """Todos os check-ins do atleta, do mais novo pro mais antigo."""
+    athlete = _owned_athlete(session, coach, athlete_id)
+    rows = session.exec(
+        select(WeeklyCheckin)
+        .where(WeeklyCheckin.athlete_id == athlete.id)
+        .order_by(WeeklyCheckin.week_start.desc())
+    ).all()
+    return [_checkin_out(c, athlete.name) for c in rows]
+
+
+@router.delete("/coach/checkins/{checkin_id}")
+def coach_delete_checkin(
+    checkin_id: int,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    c = session.get(WeeklyCheckin, checkin_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Check-in não encontrado.")
+    _owned_athlete(session, coach, c.athlete_id)
+    session.delete(c)
+    session.commit()
+    return {"ok": True}
+
+
+@router.delete("/coach/videos/{video_id}")
+def coach_delete_video(
+    video_id: int,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    """Apaga o vídeo do atleta e as correções dele (o arquivo no R2 fica)."""
+    v = session.get(VideoSubmission, video_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Vídeo não encontrado.")
+    _owned_athlete(session, coach, v.athlete_id)
+    for corr in session.exec(select(VideoCorrection).where(VideoCorrection.submission_id == v.id)).all():
+        session.delete(corr)
+    # Vídeos que comparavam com este perdem a referência.
+    for other in session.exec(select(VideoSubmission).where(VideoSubmission.compare_to_id == v.id)).all():
+        other.compare_to_id = None
+        session.add(other)
+    session.delete(v)
+    session.commit()
+    return {"ok": True}
+
+
+# ============================================================
 # Coach — plano do atleta
 # ============================================================
 @router.get("/coach/athletes/{athlete_id}/plan", response_model=Optional[PlanOut])
