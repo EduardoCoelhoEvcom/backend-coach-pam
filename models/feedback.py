@@ -78,6 +78,9 @@ class VideoCorrection(SQLModel, table=True):
     audio_url: Optional[str] = None  # "Ouvir · 0:18"
     audio_duration_sec: Optional[float] = None
     is_focus: bool = False  # selo FOCO
+    # Desenho da coach sobre o quadro pausado: lista de formas com coordenadas
+    # de 0 a 1 em relação ao vídeo, ex. {"t": "line", "c": "#FF4D4D", "p": [[x,y],[x,y]]}.
+    drawing: Optional[list] = Field(default=None, sa_column=Column(JSON, nullable=True))
     created_at: datetime = Field(default_factory=_utc_now)
 
 
