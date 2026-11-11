@@ -85,6 +85,8 @@ ALERT_EMAIL_FROM = os.getenv("ALERT_EMAIL_FROM", "") or SMTP_USER
 # enviar, então usa um nome único e difícil de adivinhar.
 NTFY_SERVER = os.getenv("NTFY_SERVER", "https://ntfy.sh")
 NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
+# Avisos da coach (vídeo novo, check-in). Sem ele, usa o mesmo tópico do admin.
+NTFY_COACH_TOPIC = os.getenv("NTFY_COACH_TOPIC", "") or NTFY_TOPIC
 
 # ---- Object storage (Cloudflare R2) ----
 # Usado para upload de vídeos de exercício pelos atletas, sem passar

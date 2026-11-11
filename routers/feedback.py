@@ -24,7 +24,7 @@ externo (ver README da PR). O backend só guarda o endereço.
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlmodel import Session, SQLModel, select
 
 from db import get_session
@@ -37,6 +37,7 @@ from models import (
 )
 from security import require_role
 from services.clock import today_br
+from services.notify import notify_coach
 
 router = APIRouter(tags=["feedback"])
 
@@ -253,6 +254,7 @@ def athlete_current_checkin(
 @router.post("/athlete/checkins", response_model=CheckinOut)
 def athlete_submit_checkin(
     payload: CheckinIn,
+    background: BackgroundTasks,
     session: Session = Depends(get_session),
     athlete: User = Depends(require_role("athlete")),
 ):
@@ -282,6 +284,14 @@ def athlete_submit_checkin(
     session.add(c)
     session.commit()
     session.refresh(c)
+    first = (athlete.name or "Atleta").split(" ")[0]
+    if c.has_pain:
+        body = f"{first} marcou dor" + (f": {c.pain_note}" if c.pain_note else ".")
+    elif c.needs_attention:
+        body = f"{first} respondeu com nota baixa. Vale olhar."
+    else:
+        body = f"{first} respondeu o check-in da semana."
+    background.add_task(notify_coach, "Check-in novo", body, "warning" if c.needs_attention else "clipboard")
     return _checkin_out(c)
 
 
@@ -363,6 +373,7 @@ def athlete_video_upload_url(
 @router.post("/athlete/videos", response_model=VideoOut)
 def athlete_send_video(
     payload: VideoIn,
+    background: BackgroundTasks,
     session: Session = Depends(get_session),
     athlete: User = Depends(require_role("athlete")),
 ):
@@ -382,6 +393,10 @@ def athlete_send_video(
     session.add(v)
     session.commit()
     session.refresh(v)
+    first = (athlete.name or "Atleta").split(" ")[0]
+    background.add_task(
+        notify_coach, "Vídeo novo pra corrigir", f"{first} mandou {v.exercise_name}.", "movie_camera"
+    )
     return _video_out(session, v)
 
 
@@ -615,6 +630,32 @@ def coach_send_corrections(
     session.commit()
     session.refresh(v)
     return _video_out(session, v, athlete.name)
+
+
+@router.post("/coach/files/pdf-upload-url", response_model=UploadUrlOut)
+def coach_pdf_upload_url(
+    payload: UploadUrlIn,
+    coach: User = Depends(require_role("coach")),
+):
+    """URL pra coach subir um PDF (ex.: diagnóstico técnico) direto pro R2."""
+    import secrets
+
+    import services.storage as storage
+
+    if (payload.content_type or "").split(";")[0].strip().lower() != "application/pdf":
+        raise HTTPException(status_code=422, detail="Envie um arquivo PDF.")
+    if not storage.is_r2_configured():
+        raise HTTPException(status_code=503, detail="Envio de arquivo temporariamente indisponível. Avise o admin.")
+    if payload.size_bytes and payload.size_bytes > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="O PDF passa de 25 MB. Tente um arquivo menor.")
+    key = f"docs/{coach.id}/{secrets.token_hex(8)}.pdf"
+    return UploadUrlOut(
+        put_url=storage.presigned_put_url(key, "application/pdf", expires_in=900),
+        public_url=storage.public_url_for(key),
+        key=key,
+        expires_in=900,
+        max_bytes=25 * 1024 * 1024,
+    )
 
 
 # ============================================================
