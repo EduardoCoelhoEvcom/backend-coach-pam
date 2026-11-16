@@ -374,6 +374,52 @@ def dedupe_global_exercises(session: Session) -> int:
     return hidden
 
 
+def mobility_slug(coach_id, name: str) -> str:
+    """Chave única da biblioteca: dono + nome normalizado."""
+    norm = " ".join((name or "").strip().lower().split())
+    return f"{coach_id if coach_id is not None else 'global'}:{norm}"
+
+
+def ensure_mobility_library(session: Session) -> int:
+    """Carga inicial da biblioteca de mobilidade (services/data/mobilidades.json).
+
+    Idempotente: só cria o que ainda não existe. O slug único impede item
+    repetido mesmo com dois servidores subindo juntos.
+    """
+    import json
+    from pathlib import Path
+
+    from sqlalchemy.exc import IntegrityError
+
+    from models import MobilityLibraryItem
+
+    path = Path(__file__).parent / "data" / "mobilidades.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    have = {i.slug for i in session.exec(select(MobilityLibraryItem)).all()}
+    created = 0
+    for ex in data.get("exercicios") or []:
+        name = (ex.get("nome") or "").strip()
+        if not name:
+            continue
+        slug = mobility_slug(None, name)
+        if slug in have:
+            continue
+        session.add(MobilityLibraryItem(
+            coach_id=None, name=name, joint=ex.get("articulacao") or "Quadril",
+            video_url=ex.get("video") or None, default_dose=ex.get("dose_padrao") or None, slug=slug,
+        ))
+        try:
+            session.commit()
+            created += 1
+        except IntegrityError:  # outro servidor criou ao mesmo tempo
+            session.rollback()
+        have.add(slug)
+    return created
+
+
 def seed_default_users(session: Session) -> None:
     """Cria coach@pam.com e atleta@pam.com (senha 123456) se ainda não existirem.
 
@@ -476,6 +522,7 @@ def run_initial_seed() -> None:
         ensure_extra_lifts(session)
         ensure_rm_inheritance(session)
         dedupe_global_exercises(session)
+        ensure_mobility_library(session)
         seed_default_users(session)
         seed_admin_from_env(session)
         backfill_athlete_coach(session)

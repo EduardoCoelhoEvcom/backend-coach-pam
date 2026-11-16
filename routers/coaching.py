@@ -32,7 +32,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, SQLModel, select
 
 from db import get_session
-from models import InitialDiagnosis, MobilityCompletion, MobilityItem, TrainingGoal, User
+from models import (
+    MOBILITY_JOINTS,
+    InitialDiagnosis,
+    MobilityCompletion,
+    MobilityItem,
+    MobilityLibraryItem,
+    TrainingGoal,
+    User,
+)
 from security import require_role
 from services.clock import today_br
 
@@ -498,3 +506,72 @@ def coach_set_own_whatsapp(
     session.commit()
     session.refresh(coach)
     return CoachContactOut(name=coach.name, whatsapp=coach.whatsapp)
+
+
+# ============================================================
+# Coach — biblioteca de mobilidade (por articulação)
+# ============================================================
+class LibraryItemOut(SQLModel):
+    id: int
+    name: str
+    joint: str
+    video_url: Optional[str]
+    default_dose: Optional[str]
+    mine: bool  # criado pela coach (não é da carga inicial)
+
+
+class LibraryItemIn(SQLModel):
+    name: str
+    joint: str
+    video_url: Optional[str] = None
+    default_dose: Optional[str] = None
+
+
+def _lib_out(i: MobilityLibraryItem) -> LibraryItemOut:
+    return LibraryItemOut(
+        id=i.id, name=i.name, joint=i.joint, video_url=i.video_url,
+        default_dose=i.default_dose, mine=i.coach_id is not None,
+    )
+
+
+@router.get("/coach/mobility-library", response_model=List[LibraryItemOut])
+def coach_mobility_library(
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    rows = session.exec(
+        select(MobilityLibraryItem).where(
+            MobilityLibraryItem.is_active == True,  # noqa: E712
+            (MobilityLibraryItem.coach_id == None) | (MobilityLibraryItem.coach_id == coach.id),  # noqa: E711
+        )
+    ).all()
+    order = {j: n for n, j in enumerate(MOBILITY_JOINTS)}
+    rows = sorted(rows, key=lambda i: (order.get(i.joint, 99), i.id))
+    return [_lib_out(i) for i in rows]
+
+
+@router.post("/coach/mobility-library", response_model=LibraryItemOut)
+def coach_add_library_item(
+    payload: LibraryItemIn,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    from services.seeding import mobility_slug
+
+    name = _clean(payload.name)
+    if not name:
+        raise HTTPException(status_code=422, detail="Dê um nome pro exercício.")
+    if payload.joint not in MOBILITY_JOINTS:
+        raise HTTPException(status_code=422, detail="Escolha a articulação.")
+    slugs = {mobility_slug(None, name), mobility_slug(coach.id, name)}
+    if session.exec(select(MobilityLibraryItem).where(MobilityLibraryItem.slug.in_(slugs))).first():
+        raise HTTPException(status_code=409, detail="Já existe um exercício com esse nome na biblioteca.")
+    item = MobilityLibraryItem(
+        coach_id=coach.id, name=name, joint=payload.joint,
+        video_url=_clean_url(payload.video_url), default_dose=_clean(payload.default_dose),
+        slug=mobility_slug(coach.id, name),
+    )
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return _lib_out(item)
