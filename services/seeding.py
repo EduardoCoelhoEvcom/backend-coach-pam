@@ -95,13 +95,11 @@ def _add_exercises(
 def seed_global_library(session: Session) -> None:
     """Popula a biblioteca global de exercícios (coach_id=None).
 
-    Não roda se já existir alguma categoria global.
+    Roda em TODO startup: _get_or_create_category e _add_exercises já são
+    idempotentes (checam se o registro existe antes de criar), então novos
+    exercícios adicionados aqui entram no banco no próximo deploy sem
+    duplicar o que já tem.
     """
-    existing = session.exec(
-        select(ExerciseCategory).where(ExerciseCategory.coach_id == None)
-    ).first()
-    if existing:
-        return
 
     # ----- Categorias raiz -----
     force_cat = _get_or_create_category(
