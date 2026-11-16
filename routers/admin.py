@@ -31,21 +31,6 @@ def _days_since(dt: Optional[datetime]) -> Optional[int]:
     return max(0, (now - dt).days)
 
 
-@router.post("/reseed-library")
-def admin_reseed_library(
-    _admin: User = Depends(require_role("admin")),
-):
-    """Força o seed completo da biblioteca global de exercícios.
-
-    Usar quando aparecer "Sem correspondência na biblioteca" pra algum
-    exercício padrão (Push Jerk, Power Clean, etc) que deveria estar lá
-    mas não entrou no último deploy. Idempotente: não duplica.
-    """
-    from services.seeding import run_initial_seed
-    run_initial_seed()
-    return {"ok": True, "message": "Biblioteca re-seedada com sucesso."}
-
-
 @router.get("/overview")
 def admin_overview(
     _admin: User = Depends(require_role("admin")),

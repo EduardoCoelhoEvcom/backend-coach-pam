@@ -73,6 +73,20 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Coach PAM API", lifespan=lifespan)
 
+# Fallback pro Vercel serverless, onde o lifespan às vezes não dispara: roda
+# o seed também no module load. Idempotente — se o lifespan já fez, _seed
+# só vai confirmar que tudo tá no lugar. Protegido com try pra não impedir
+# o módulo de carregar se o banco não estiver disponível ainda.
+try:
+    create_db_and_tables()
+    run_initial_seed()
+except Exception as _seed_err:  # noqa: BLE001
+    import logging as _log
+    _log.getLogger(__name__).warning(
+        "[startup] seed no module load falhou: %r (vai tentar via lifespan)",
+        _seed_err,
+    )
+
 # Rate limiter global — limita por IP nos endpoints decorados com @limiter.limit
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
