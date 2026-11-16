@@ -571,7 +571,13 @@ def parse_sheet_dias(ws, day_slots: Optional[List[str]] = None) -> dict:
         if base and not cur_ex["rm_base"]:
             cur_ex["rm_base"] = base
         if a and not cur_ex["name"]:
-            cur_ex["name"] = a
+            # Em exercício complexo (Clean+Push Jerk, Yoyo, etc) as linhas são
+            # rotuladas "Série 1 / Série 2 / Série 3" com percentuais diferentes.
+            # Nesses casos o nome do exercício vem do cabeçalho "#N ..." (ex.:
+            # "Yoyo Power Clean (2+1 = 1 rep)"), e NÃO do rótulo da linha. Se
+            # pegássemos "Série 1" como nome, o app ia mostrar errado.
+            if not re.match(r"^\s*s[eé]rie\s*\d", a, re.IGNORECASE):
+                cur_ex["name"] = a
 
         any_data = False
         for wi, pc in enumerate(week_cols):
