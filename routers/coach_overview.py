@@ -76,6 +76,8 @@ class AthleteOverview(SQLModel):
     videos_pending: int = 0
     # Séries marcadas como "errou" ou "não fez" nos últimos 7 dias.
     missed_sets_week: int = 0
+    # Dias da semana atual (segunda a domingo) com série marcada.
+    week_trained: List[bool] = [False] * 7
     checkin: Optional[CheckinSummary] = None
 
 
@@ -179,6 +181,7 @@ def coach_overview(
     # Último dia com série marcada
     last_by: Dict[int, date] = {}
     missed_by: Dict[int, int] = {}
+    trained_days: Dict[int, set] = {}
     week_ago = today - timedelta(days=7)
     for e in session.exec(
         select(TrainingSetExecution).where(
@@ -188,6 +191,8 @@ def coach_overview(
     ).all():
         if e.athlete_id not in last_by or e.date_completed > last_by[e.athlete_id]:
             last_by[e.athlete_id] = e.date_completed
+        if e.date_completed and week <= e.date_completed <= week + timedelta(days=6):
+            trained_days.setdefault(e.athlete_id, set()).add((e.date_completed - week).days)
         if e.status in ("errou", "nao_fez") and e.date_completed and e.date_completed >= week_ago:
             missed_by[e.athlete_id] = missed_by.get(e.athlete_id, 0) + 1
 
@@ -253,6 +258,7 @@ def coach_overview(
             video_today=any(br_date_of(v.created_at) == today for v in mine_videos if v.created_at),
             videos_pending=sum(1 for v in mine_videos if v.status == "pendente"),
             missed_sets_week=missed_by.get(a.id, 0),
+            week_trained=[i in trained_days.get(a.id, set()) for i in range(7)],
             checkin=csum,
         ))
 
