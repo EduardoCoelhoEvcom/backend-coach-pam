@@ -6,13 +6,34 @@ deploy (não precisa de ALTER em `_ensure_columns`).
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Column, UniqueConstraint
+from sqlalchemy import Column, String, UniqueConstraint
 from sqlalchemy.types import JSON
 from sqlmodel import Field, SQLModel
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+MOBILITY_JOINTS = ["Tornozelo", "Quadril", "Torácica", "Ombro", "Punho"]
+
+
+class MobilityLibraryItem(SQLModel, table=True):
+    """Biblioteca de mobilidade da coach, por articulação.
+
+    coach_id vazio = item da carga inicial (mobilidades.json), visível pra coach.
+    `slug` (dono + nome normalizado) é único: evita item repetido mesmo com
+    vários servidores subindo ao mesmo tempo.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    coach_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
+    name: str
+    joint: str = Field(index=True)  # Tornozelo | Quadril | Torácica | Ombro | Punho
+    video_url: Optional[str] = None
+    default_dose: Optional[str] = None
+    slug: str = Field(sa_column=Column(String, unique=True, nullable=False))
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=_utc_now)
 
 
 class MobilityItem(SQLModel, table=True):
