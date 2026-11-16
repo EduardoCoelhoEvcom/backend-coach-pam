@@ -93,6 +93,9 @@ def test_activity_today_and_videos(coach_client, athlete_client, athlete_user, s
     assert a["trained_today"] is True and a["days_without_training"] == 0
     assert a["video_today"] is True and a["videos_pending"] == 1
     assert data["videos_pending"] == 1
+    # Pontinho dourado no dia de hoje (segunda = 0 ... domingo = 6)
+    from services.clock import today_br
+    assert a["week_trained"] == [i == today_br().weekday() for i in range(7)]
 
 
 def test_overview_only_own_athletes(client, session, athlete_user):
