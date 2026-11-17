@@ -69,3 +69,11 @@ def test_limpa_exercicio_repetido(session):
     assert a.is_active and not b.is_active
     assert child.rm_source_exercise_id == a.id
     assert dedupe_global_exercises(session) == 0  # idempotente
+
+
+def test_plano_time_de_competicao(coach_client):
+    r = coach_client.post("/coach/athletes", json={
+        "name": "Leo Comp", "email": "leo.comp@example.com", "plan": "competicao", "frequency": 5})
+    assert r.status_code == 200, r.text
+    p = coach_client.get(f"/coach/athletes/{r.json()['id']}/plan").json()
+    assert (p["plan_name"], p["monthly_price"], p["months_total"]) == ("Time de competição", 100.0, None)
