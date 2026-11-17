@@ -16,6 +16,9 @@ def _utc_now() -> datetime:
 
 
 MOBILITY_JOINTS = ["Tornozelo", "Quadril", "Torácica", "Ombro", "Punho"]
+# Aquecimento técnico (neural), por movimento. Mesma "estante" da mobilidade.
+WARMUP_CATEGORIES = ["Snatch", "Clean", "Jerk"]
+LIBRARY_KINDS = {"mobilidade": MOBILITY_JOINTS, "aquecimento": WARMUP_CATEGORIES}
 
 
 class MobilityLibraryItem(SQLModel, table=True):
@@ -28,7 +31,9 @@ class MobilityLibraryItem(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     coach_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     name: str
-    joint: str = Field(index=True)  # Tornozelo | Quadril | Torácica | Ombro | Punho
+    # Mobilidade: articulação (Tornozelo...). Aquecimento: movimento (Snatch, Clean, Jerk).
+    joint: str = Field(index=True)
+    kind: str = Field(default="mobilidade", index=True)  # mobilidade | aquecimento
     video_url: Optional[str] = None
     default_dose: Optional[str] = None
     slug: str = Field(sa_column=Column(String, unique=True, nullable=False))

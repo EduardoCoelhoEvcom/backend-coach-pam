@@ -33,6 +33,7 @@ from sqlmodel import Session, SQLModel, select
 
 from db import get_session
 from models import (
+    LIBRARY_KINDS,
     MOBILITY_JOINTS,
     InitialDiagnosis,
     MobilityCompletion,
@@ -518,11 +519,13 @@ class LibraryItemOut(SQLModel):
     video_url: Optional[str]
     default_dose: Optional[str]
     mine: bool  # criado pela coach (não é da carga inicial)
+    kind: str = "mobilidade"  # mobilidade | aquecimento
 
 
 class LibraryItemIn(SQLModel):
     name: str
-    joint: str
+    joint: str  # articulação (mobilidade) ou movimento (aquecimento)
+    kind: str = "mobilidade"
     video_url: Optional[str] = None
     default_dose: Optional[str] = None
 
@@ -530,23 +533,26 @@ class LibraryItemIn(SQLModel):
 def _lib_out(i: MobilityLibraryItem) -> LibraryItemOut:
     return LibraryItemOut(
         id=i.id, name=i.name, joint=i.joint, video_url=i.video_url,
-        default_dose=i.default_dose, mine=i.coach_id is not None,
+        default_dose=i.default_dose, mine=i.coach_id is not None, kind=i.kind or "mobilidade",
     )
 
 
 @router.get("/coach/mobility-library", response_model=List[LibraryItemOut])
 def coach_mobility_library(
+    kind: str = "mobilidade",
     session: Session = Depends(get_session),
     coach: User = Depends(require_role("coach")),
 ):
-    rows = session.exec(
-        select(MobilityLibraryItem).where(
-            MobilityLibraryItem.is_active == True,  # noqa: E712
-            (MobilityLibraryItem.coach_id == None) | (MobilityLibraryItem.coach_id == coach.id),  # noqa: E711
-        )
-    ).all()
-    order = {j: n for n, j in enumerate(MOBILITY_JOINTS)}
-    rows = sorted(rows, key=lambda i: (order.get(i.joint, 99), i.id))
+    """Biblioteca da coach. kind = mobilidade (padrão), aquecimento ou todos."""
+    stmt = select(MobilityLibraryItem).where(
+        MobilityLibraryItem.is_active == True,  # noqa: E712
+        (MobilityLibraryItem.coach_id == None) | (MobilityLibraryItem.coach_id == coach.id),  # noqa: E711
+    )
+    if kind != "todos":
+        stmt = stmt.where(MobilityLibraryItem.kind == kind)
+    rows = session.exec(stmt).all()
+    order = {j: n for n, j in enumerate(MOBILITY_JOINTS + [c for cats in LIBRARY_KINDS.values() for c in cats])}
+    rows = sorted(rows, key=lambda i: (i.kind != "mobilidade", order.get(i.joint, 99), i.id))
     return [_lib_out(i) for i in rows]
 
 
@@ -561,15 +567,21 @@ def coach_add_library_item(
     name = _clean(payload.name)
     if not name:
         raise HTTPException(status_code=422, detail="Dê um nome pro exercício.")
-    if payload.joint not in MOBILITY_JOINTS:
-        raise HTTPException(status_code=422, detail="Escolha a articulação.")
-    slugs = {mobility_slug(None, name), mobility_slug(coach.id, name)}
+    kind = payload.kind or "mobilidade"
+    if kind not in LIBRARY_KINDS:
+        raise HTTPException(status_code=422, detail="Tipo de exercício inválido.")
+    if payload.joint not in LIBRARY_KINDS[kind]:
+        raise HTTPException(
+            status_code=422,
+            detail="Escolha a articulação." if kind == "mobilidade" else "Escolha o movimento (Snatch, Clean ou Jerk).",
+        )
+    slugs = {mobility_slug(None, name, kind), mobility_slug(coach.id, name, kind)}
     if session.exec(select(MobilityLibraryItem).where(MobilityLibraryItem.slug.in_(slugs))).first():
         raise HTTPException(status_code=409, detail="Já existe um exercício com esse nome na biblioteca.")
     item = MobilityLibraryItem(
-        coach_id=coach.id, name=name, joint=payload.joint,
+        coach_id=coach.id, name=name, joint=payload.joint, kind=kind,
         video_url=_clean_url(payload.video_url), default_dose=_clean(payload.default_dose),
-        slug=mobility_slug(coach.id, name),
+        slug=mobility_slug(coach.id, name, kind),
     )
     session.add(item)
     session.commit()
