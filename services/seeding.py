@@ -374,10 +374,11 @@ def dedupe_global_exercises(session: Session) -> int:
     return hidden
 
 
-def mobility_slug(coach_id, name: str) -> str:
-    """Chave única da biblioteca: dono + nome normalizado."""
+def mobility_slug(coach_id, name: str, kind: str = "mobilidade") -> str:
+    """Chave única da biblioteca: dono + (tipo, se não for mobilidade) + nome normalizado."""
     norm = " ".join((name or "").strip().lower().split())
-    return f"{coach_id if coach_id is not None else 'global'}:{norm}"
+    owner = coach_id if coach_id is not None else "global"
+    return f"{owner}:{norm}" if kind == "mobilidade" else f"{owner}:{kind}:{norm}"
 
 
 def ensure_mobility_library(session: Session) -> int:

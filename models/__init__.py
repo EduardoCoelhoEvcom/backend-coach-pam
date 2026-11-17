@@ -3,7 +3,9 @@
 Importar daqui garante que SQLModel.metadata.create_all veja todas as tabelas.
 """
 from .coaching import (
+    LIBRARY_KINDS,
     MOBILITY_JOINTS,
+    WARMUP_CATEGORIES,
     CoachNote,
     InitialDiagnosis,
     MobilityCompletion,
@@ -36,6 +38,8 @@ __all__ = [
     "MobilityItem",
     "MobilityLibraryItem",
     "MOBILITY_JOINTS",
+    "WARMUP_CATEGORIES",
+    "LIBRARY_KINDS",
     "MobilityCompletion",
     "InitialDiagnosis",
     "TrainingGoal",

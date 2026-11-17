@@ -86,6 +86,15 @@ def _ensure_columns() -> None:
                             "ADD COLUMN note VARCHAR"
                         )
                     )
+        # Biblioteca: mobilidade e aquecimento técnico na mesma tabela.
+        if insp.has_table("mobilitylibraryitem"):
+            lib_cols = {c["name"] for c in insp.get_columns("mobilitylibraryitem")}
+            if "kind" not in lib_cols:
+                with engine.begin() as conn:
+                    conn.execute(text(
+                        "ALTER TABLE mobilitylibraryitem ADD COLUMN kind VARCHAR NOT NULL DEFAULT 'mobilidade'"
+                    ))
+
         # Desenho da coach sobre o vídeo (correção no quadro pausado).
         if insp.has_table("videocorrection"):
             vc_cols = {c["name"] for c in insp.get_columns("videocorrection")}
