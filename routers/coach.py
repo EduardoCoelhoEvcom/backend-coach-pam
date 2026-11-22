@@ -96,12 +96,16 @@ class UserRead(SQLModel):
 PLAN_OPTIONS = {
     "experience": {"plan_name": "Experience", "months_total": 6, "prices": {2: 190.0, 3: 250.0, 5: 370.0}},
     "avulso": {"plan_name": "Mês avulso", "months_total": None, "prices": {2: 230.0, 3: 310.0, 5: 460.0}},
+    # Time de competição: valor fixo por mês, sem dias por semana definidos.
+    "competicao": {"plan_name": "Time de competição", "months_total": None, "flat_price": 100.0},
 }
 
 
 def plan_for(plan: str, frequency: Optional[int]) -> Optional[dict]:
     """Plano + frequência -> campos do AthletePlan (None se não existir)."""
     opt = PLAN_OPTIONS.get(plan)
+    if opt and "flat_price" in opt:
+        return {"plan_name": opt["plan_name"], "months_total": opt["months_total"], "monthly_price": opt["flat_price"]}
     freq = frequency or 2  # app antigo não manda a frequência (preço antigo = 2x)
     if not opt or freq not in opt["prices"]:
         return None
@@ -118,8 +122,8 @@ class AthleteCreate(SQLModel):
     # Sem senha, o backend gera uma provisória (ex.: PAM-7K4Q2X).
     password: Optional[str] = None
     whatsapp: Optional[str] = None
-    plan: Optional[str] = None  # "experience" | "avulso"
-    frequency: Optional[int] = None  # 2 | 3 | 5 treinos por semana
+    plan: Optional[str] = None  # "experience" | "avulso" | "competicao"
+    frequency: Optional[int] = None  # 2 | 3 | 5 treinos por semana (não vale pro time de competição)
     start_date: Optional[date] = None
 
 
