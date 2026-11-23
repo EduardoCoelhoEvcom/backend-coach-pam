@@ -108,6 +108,7 @@ class SetExecutionOut(SQLModel):
     diff_kg: Optional[float] = None
     status: Optional[str] = None
     note: Optional[str] = None
+    marked_by_coach: bool = False
     created_at: datetime
     updated_at: datetime
 

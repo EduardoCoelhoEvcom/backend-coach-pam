@@ -890,6 +890,165 @@ def coach_reset_day_executions(
     return {"ok": True, "deleted": deleted, "week_number": week_number, "day": day}
 
 
+DAY_SLUGS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
+def _past_week(session: Session, coach: User, sheet_id: int, week_number: int):
+    """Planilha + início da semana, validando dono e se a semana já terminou."""
+    sheet = session.get(TrainingSheet, sheet_id)
+    if not sheet:
+        raise HTTPException(status_code=404, detail="Planilha não encontrada")
+    if sheet.coach_id != coach.id:
+        raise HTTPException(status_code=403, detail="Acesso negado a esta planilha")
+    if week_number < 1 or week_number > (sheet.weeks or 0) or not sheet.start_date:
+        raise HTTPException(status_code=404, detail="Semana não encontrada")
+    week_start = sheet.start_date + timedelta(days=(week_number - 1) * 7)
+    if week_start + timedelta(days=6) >= today_br():
+        raise HTTPException(status_code=400, detail="Só dá pra marcar semanas que já terminaram.")
+    return sheet, week_start
+
+
+def _date_of_day(week_start: date, slug: str) -> date:
+    """Data daquele dia da semana dentro da semana da planilha."""
+    return week_start + timedelta(days=(DAY_SLUGS.index(slug) - week_start.weekday()) % 7)
+
+
+@router.post("/coach/training-sheets/{sheet_id}/weeks/{week_number}/mark-done")
+def coach_mark_week_done(
+    sheet_id: int,
+    week_number: int,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    """Marca como feito o que faltava numa semana que já passou.
+
+    Não mexe no que o atleta já marcou (inclusive "errou" e "não fez").
+    """
+    sheet, week_start = _past_week(session, coach, sheet_id, week_number)
+    plan_week = next(
+        (w for w in (sheet.plan or {}).get("weeks") or [] if w.get("week_number") == week_number),
+        None,
+    )
+    rows = session.exec(
+        select(TrainingSetExecution).where(
+            TrainingSetExecution.training_sheet_id == sheet_id,
+            TrainingSetExecution.athlete_id == sheet.athlete_id,
+            TrainingSetExecution.week_number == week_number,
+        )
+    ).all()
+    by_key: dict = {}
+    for r in rows:
+        by_key.setdefault((r.day, r.exercise_name, r.series_index), []).append(r)
+
+    now = datetime.now(timezone.utc)
+    marked = 0
+    days = 0
+    for d in (plan_week or {}).get("days") or []:
+        slug = d.get("day")
+        if d.get("rest") or slug not in DAY_SLUGS:
+            continue
+        lpo = d.get("lpo_exercises") if isinstance(d.get("lpo_exercises"), list) else d.get("exercises") or []
+        items = [(t.get("name"), 0, None) for t in d.get("technical") or []]
+        for ex in [*lpo, *(d.get("accessories") or [])]:
+            for i, s in enumerate(ex.get("series") or []):
+                items.append((ex.get("name"), i, s.get("percent")))
+        if not items:
+            continue
+        days += 1
+        when = _date_of_day(week_start, slug)
+        for name, index, percent in items:
+            existing = by_key.get((slug, name, index), [])
+            if any(r.status for r in existing):
+                continue
+            marked += 1
+            if existing:
+                existing[0].status = "fez"
+                existing[0].marked_by_coach = True
+                existing[0].updated_at = now
+                session.add(existing[0])
+            else:
+                session.add(TrainingSetExecution(
+                    athlete_id=sheet.athlete_id,
+                    training_sheet_id=sheet_id,
+                    week_number=week_number,
+                    day=slug,
+                    date_completed=when,
+                    exercise_name=name,
+                    series_index=index,
+                    prescribed_percent=percent,
+                    status="fez",
+                    marked_by_coach=True,
+                    created_at=now,
+                    updated_at=now,
+                ))
+        done = session.exec(
+            select(TrainingDayCompletion).where(
+                TrainingDayCompletion.training_sheet_id == sheet_id,
+                TrainingDayCompletion.athlete_id == sheet.athlete_id,
+                TrainingDayCompletion.week_number == week_number,
+                TrainingDayCompletion.day == slug,
+            )
+        ).first()
+        if not done:
+            session.add(TrainingDayCompletion(
+                athlete_id=sheet.athlete_id,
+                training_sheet_id=sheet_id,
+                week_number=week_number,
+                day=slug,
+                date_completed=when,
+            ))
+    session.commit()
+    return {"ok": True, "week_number": week_number, "days": days, "marked": marked}
+
+
+@router.delete("/coach/training-sheets/{sheet_id}/weeks/{week_number}/mark-done")
+def coach_undo_week_done(
+    sheet_id: int,
+    week_number: int,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    """Desfaz só o que a coach marcou. O que o atleta marcou continua."""
+    sheet, week_start = _past_week(session, coach, sheet_id, week_number)
+    rows = session.exec(
+        select(TrainingSetExecution).where(
+            TrainingSetExecution.training_sheet_id == sheet_id,
+            TrainingSetExecution.athlete_id == sheet.athlete_id,
+            TrainingSetExecution.week_number == week_number,
+        )
+    ).all()
+    removed = 0
+    touched = set()
+    for r in rows:
+        if not r.marked_by_coach:
+            continue
+        removed += 1
+        touched.add(r.day)
+        if r.used_kg is not None or r.note:
+            r.status = None
+            r.marked_by_coach = False
+            session.add(r)
+        else:
+            session.delete(r)
+    session.flush()
+    for slug in touched:
+        has_real = any(r.day == slug and r.status and not r.marked_by_coach for r in rows)
+        if has_real:
+            continue
+        for c in session.exec(
+            select(TrainingDayCompletion).where(
+                TrainingDayCompletion.training_sheet_id == sheet_id,
+                TrainingDayCompletion.athlete_id == sheet.athlete_id,
+                TrainingDayCompletion.week_number == week_number,
+                TrainingDayCompletion.day == slug,
+                TrainingDayCompletion.date_completed == _date_of_day(week_start, slug),
+            )
+        ).all():
+            session.delete(c)
+    session.commit()
+    return {"ok": True, "week_number": week_number, "removed": removed}
+
+
 @router.get(
     "/coach/training-sheets/{sheet_id}/executions",
     response_model=List[SetExecutionOut],
@@ -931,6 +1090,7 @@ def coach_list_sheet_executions(
             diff_kg=r.diff_kg,
             status=r.status,
             note=r.note,
+            marked_by_coach=bool(r.marked_by_coach),
             created_at=r.created_at,
             updated_at=r.updated_at,
         )
