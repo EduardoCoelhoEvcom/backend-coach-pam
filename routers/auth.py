@@ -18,6 +18,7 @@ from models import (
     AthleteExerciseRMHistory,
     AthletePlan,
     CoachNote,
+    RefreshToken,
     InitialDiagnosis,
     MobilityCompletion,
     MobilityItem,
@@ -565,14 +566,21 @@ def delete_my_account(
         raise HTTPException(status_code=400, detail="Senha incorreta.")
 
     user_id = current_user.id
+    delete_user_and_data(session, current_user)
+
+    logger.info("user_deleted_self", extra={"user_id": user_id})
+
+    return {"ok": True, "message": "Conta e dados removidos."}
+
+
+def delete_user_and_data(session: Session, user: User) -> None:
+    """Apaga o usuário e todos os dados dele. Irreversível."""
+    user_id = user.id
 
     # Apaga em ordem (filhos antes de pais pra não violar FK).
     _delete_feedback_data(session, user_id)
-    session.exec(
-        select(TrainingSetExecution).where(
-            TrainingSetExecution.athlete_id == user_id
-        )
-    )
+    for row in session.exec(select(RefreshToken).where(RefreshToken.user_id == user_id)).all():
+        session.delete(row)
     for row in session.exec(
         select(TrainingSetExecution).where(
             TrainingSetExecution.athlete_id == user_id
@@ -602,9 +610,6 @@ def delete_my_account(
     ).all():
         session.delete(row)
 
-    session.delete(current_user)
+    session.flush()
+    session.delete(user)
     session.commit()
-
-    logger.info("user_deleted_self", extra={"user_id": user_id})
-
-    return {"ok": True, "message": "Conta e dados removidos."}

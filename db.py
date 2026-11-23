@@ -95,6 +95,13 @@ def _ensure_columns() -> None:
                         "ALTER TABLE mobilitylibraryitem ADD COLUMN kind VARCHAR NOT NULL DEFAULT 'mobilidade'"
                     ))
 
+        # Competições do atleta (aba Plano).
+        if insp.has_table("traininggoal"):
+            goal_cols = {c["name"] for c in insp.get_columns("traininggoal")}
+            if "competitions" not in goal_cols:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE traininggoal ADD COLUMN competitions JSON"))
+
         # Desenho da coach sobre o vídeo (correção no quadro pausado).
         if insp.has_table("videocorrection"):
             vc_cols = {c["name"] for c in insp.get_columns("videocorrection")}

@@ -455,6 +455,9 @@ def athlete_get_plan(
     p = session.exec(select(AthletePlan).where(AthletePlan.athlete_id == athlete.id)).first()
     if not p:
         return None
+    if p.plan_name.strip().lower().startswith("plano antigo"):
+        # "Plano antigo" é só pra coach: o aluno vê um nome neutro.
+        return _plan_out(p).model_copy(update={"plan_name": "Programa LPO"})
     out = _plan_out(p)
     if not p.show_price_to_athlete:
         out.monthly_price = None
