@@ -91,6 +91,8 @@ class TrainingGoal(SQLModel, table=True):
     phases: list = Field(default_factory=list, sa_column=Column(JSON))
     # Focos técnicos: [{"title": "...", "detail": "..."}]
     focuses: list = Field(default_factory=list, sa_column=Column(JSON))
+    # Competições pela frente (opcional, pode ter várias): [{"name": "...", "date": "AAAA-MM-DD"}]
+    competitions: Optional[list] = Field(default_factory=list, sa_column=Column(JSON, nullable=True))
     coach_note: Optional[str] = None  # "Recado da coach"
     updated_at: datetime = Field(default_factory=_utc_now)
 

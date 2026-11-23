@@ -45,7 +45,7 @@ from schemas import (
     TrainingSheetDetail,
     TrainingSheetRead,
 )
-from security import get_password_hash, require_role
+from security import get_password_hash, require_role, revoke_all_user_tokens
 from services.clock import today_br
 from services.training_plan import (
     build_default_plan,
@@ -98,12 +98,23 @@ PLAN_OPTIONS = {
     "avulso": {"plan_name": "Mês avulso", "months_total": None, "prices": {2: 230.0, 3: 310.0, 5: 460.0}},
     # Time de competição: valor fixo por mês, sem dias por semana definidos.
     "competicao": {"plan_name": "Time de competição", "months_total": None, "flat_price": 100.0},
+    # Plano antigo: a coach digita o valor (e a duração, se tiver).
+    "antigo": {"plan_name": "Plano antigo", "months_total": None, "custom_price": True},
 }
 
 
-def plan_for(plan: str, frequency: Optional[int]) -> Optional[dict]:
+def plan_for(
+    plan: str,
+    frequency: Optional[int],
+    custom_price: Optional[float] = None,
+    custom_months: Optional[int] = None,
+) -> Optional[dict]:
     """Plano + frequência -> campos do AthletePlan (None se não existir)."""
     opt = PLAN_OPTIONS.get(plan)
+    if opt and opt.get("custom_price"):
+        if custom_price is None or custom_price < 0 or (custom_months is not None and custom_months < 1):
+            return None
+        return {"plan_name": opt["plan_name"], "months_total": custom_months, "monthly_price": custom_price}
     if opt and "flat_price" in opt:
         return {"plan_name": opt["plan_name"], "months_total": opt["months_total"], "monthly_price": opt["flat_price"]}
     freq = frequency or 2  # app antigo não manda a frequência (preço antigo = 2x)
@@ -122,8 +133,10 @@ class AthleteCreate(SQLModel):
     # Sem senha, o backend gera uma provisória (ex.: PAM-7K4Q2X).
     password: Optional[str] = None
     whatsapp: Optional[str] = None
-    plan: Optional[str] = None  # "experience" | "avulso" | "competicao"
+    plan: Optional[str] = None  # "experience" | "avulso" | "competicao" | "antigo"
     frequency: Optional[int] = None  # 2 | 3 | 5 treinos por semana (não vale pro time de competição)
+    custom_price: Optional[float] = None  # só no plano antigo
+    custom_months: Optional[int] = None  # só no plano antigo (opcional)
     start_date: Optional[date] = None
 
 
@@ -185,7 +198,7 @@ def create_athlete_for_coach(
         )
     plan = None
     if payload.plan:
-        plan = plan_for(payload.plan, payload.frequency)
+        plan = plan_for(payload.plan, payload.frequency, payload.custom_price, payload.custom_months)
         if plan is None:
             raise HTTPException(status_code=422, detail="Plano inválido.")
 
@@ -220,6 +233,120 @@ def create_athlete_for_coach(
         plan_name=plan["plan_name"] if plan else None,
         start_date=start,
     )
+
+
+class AthleteUpdate(SQLModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    whatsapp: Optional[str] = None
+    vencimento: Optional[date] = None
+
+
+class AthleteProfile(SQLModel):
+    id: int
+    name: str
+    email: str
+    whatsapp: Optional[str] = None
+    vencimento: Optional[date] = None
+    must_change_password: bool = False
+
+
+class AthleteRemove(SQLModel):
+    confirm_name: str
+
+
+def _my_athlete(session: Session, coach: User, athlete_id: int) -> User:
+    athlete = session.get(User, athlete_id)
+    if not athlete or athlete.role != "athlete" or athlete.coach_id != coach.id:
+        raise HTTPException(status_code=404, detail="Atleta não encontrado.")
+    return athlete
+
+
+def _profile(a: User) -> AthleteProfile:
+    return AthleteProfile(
+        id=a.id,
+        name=a.name,
+        email=a.email,
+        whatsapp=a.whatsapp,
+        vencimento=a.vencimento,
+        must_change_password=a.must_change_password,
+    )
+
+
+@router.get("/coach/athletes/{athlete_id}/profile", response_model=AthleteProfile)
+def get_athlete_profile(
+    athlete_id: int,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    return _profile(_my_athlete(session, coach, athlete_id))
+
+
+@router.patch("/coach/athletes/{athlete_id}", response_model=AthleteProfile)
+def update_athlete(
+    athlete_id: int,
+    payload: AthleteUpdate,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    """Edita o cadastro. Só mexe nos campos enviados."""
+    from models import get_user_by_email
+    athlete = _my_athlete(session, coach, athlete_id)
+    sent = payload.model_fields_set
+    if "name" in sent:
+        name = (payload.name or "").strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="Informe o nome do atleta.")
+        athlete.name = name
+    if "email" in sent:
+        if not payload.email:
+            raise HTTPException(status_code=422, detail="Informe o e-mail do atleta.")
+        email = payload.email.strip().lower()
+        other = get_user_by_email(email, session)
+        if other and other.id != athlete.id:
+            raise HTTPException(status_code=400, detail="Já existe um usuário com esse e-mail.")
+        athlete.email = email
+    if "whatsapp" in sent:
+        athlete.whatsapp = (payload.whatsapp or "").strip() or None
+    if "vencimento" in sent:
+        athlete.vencimento = payload.vencimento
+    session.add(athlete)
+    session.commit()
+    session.refresh(athlete)
+    return _profile(athlete)
+
+
+@router.post("/coach/athletes/{athlete_id}/reset-password")
+def reset_athlete_password(
+    athlete_id: int,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    """Gera uma senha provisória nova. Ela só aparece nesta resposta."""
+    athlete = _my_athlete(session, coach, athlete_id)
+    temp = _generate_athlete_password()
+    athlete.password_hash = get_password_hash(temp)
+    athlete.must_change_password = True
+    session.add(athlete)
+    session.commit()
+    revoke_all_user_tokens(athlete.id, session)
+    return {"temp_password": temp}
+
+
+@router.delete("/coach/athletes/{athlete_id}")
+def remove_athlete(
+    athlete_id: int,
+    payload: AthleteRemove,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    """Apaga o atleta e todos os dados dele. Exige digitar o nome. Irreversível."""
+    from routers.auth import delete_user_and_data
+    athlete = _my_athlete(session, coach, athlete_id)
+    if payload.confirm_name.strip().casefold() != athlete.name.strip().casefold():
+        raise HTTPException(status_code=400, detail="O nome digitado não confere.")
+    delete_user_and_data(session, athlete)
+    return {"ok": True}
 
 
 # ============================================================

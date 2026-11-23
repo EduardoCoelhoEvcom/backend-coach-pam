@@ -386,6 +386,14 @@ def coach_set_diagnosis(
 # ============================================================
 # Objetivo e focos (aba "Plano")
 # ============================================================
+_Date = date
+
+
+class CompetitionItem(SQLModel):
+    name: str
+    date: Optional[_Date] = None
+
+
 class FocusItem(SQLModel):
     title: str
     detail: Optional[str] = None
@@ -396,6 +404,8 @@ class GoalIn(SQLModel):
     target: Optional[str] = None
     phases: List[str] = []
     focuses: List[FocusItem] = []
+    # None = não mexe (app antigo não conhece este campo).
+    competitions: Optional[List[CompetitionItem]] = None
     coach_note: Optional[str] = None
 
 
@@ -405,6 +415,7 @@ class GoalOut(SQLModel):
     target: Optional[str]
     phases: List[str]
     focuses: List[FocusItem]
+    competitions: List[CompetitionItem] = []
     coach_note: Optional[str]
     updated_at: datetime
 
@@ -416,6 +427,7 @@ def _goal_out(g: TrainingGoal) -> GoalOut:
         target=g.target,
         phases=list(g.phases or []),
         focuses=[FocusItem(**f) for f in (g.focuses or [])],
+        competitions=[CompetitionItem(**c) for c in (g.competitions or [])],
         coach_note=g.coach_note,
         updated_at=g.updated_at,
     )
@@ -465,6 +477,12 @@ def coach_set_goal(
         for f in payload.focuses
         if f.title and f.title.strip()
     ]
+    if payload.competitions is not None:
+        comps = [c for c in payload.competitions if c.name and c.name.strip()]
+        comps.sort(key=lambda c: (c.date is None, c.date or date.max))
+        g.competitions = [
+            {"name": c.name.strip(), "date": c.date.isoformat() if c.date else None} for c in comps
+        ]
     g.coach_note = _clean(payload.coach_note)
     g.updated_at = _now()
     session.add(g)
