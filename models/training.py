@@ -70,6 +70,9 @@ class TrainingSetExecution(SQLModel, table=True):
     status: Optional[str] = None
     # Observação opcional do atleta sobre a série (ex.: "perdi na 3ª rep").
     note: Optional[str] = None
+    # True quando foi a coach que marcou ("Marcar semana como feita"): dá pra desfazer
+    # sem mexer no que o próprio atleta marcou.
+    marked_by_coach: bool = Field(default=False)
 
     created_at: datetime = Field(default_factory=_utc_now)
     updated_at: datetime = Field(default_factory=_utc_now)

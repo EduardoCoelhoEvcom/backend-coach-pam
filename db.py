@@ -78,6 +78,14 @@ def _ensure_columns() -> None:
                             "ADD COLUMN status VARCHAR"
                         )
                     )
+            if "marked_by_coach" not in tse_cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE trainingsetexecution "
+                            "ADD COLUMN marked_by_coach BOOLEAN NOT NULL DEFAULT FALSE"
+                        )
+                    )
             if "note" not in tse_cols:
                 with engine.begin() as conn:
                     conn.execute(
