@@ -110,6 +110,19 @@ def _ensure_columns() -> None:
                 with engine.begin() as conn:
                     conn.execute(text("ALTER TABLE traininggoal ADD COLUMN competitions JSON"))
 
+        # Trecho do vídeo escolhido pelo atleta + "tudo certo" da coach.
+        if insp.has_table("videosubmission"):
+            vs_cols = {c["name"] for c in insp.get_columns("videosubmission")}
+            for col, ddl in (
+                ("trim_start", "FLOAT"),
+                ("trim_end", "FLOAT"),
+                ("all_good", "BOOLEAN NOT NULL DEFAULT FALSE"),
+                ("coach_message", "VARCHAR"),
+            ):
+                if col not in vs_cols:
+                    with engine.begin() as conn:
+                        conn.execute(text(f"ALTER TABLE videosubmission ADD COLUMN {col} {ddl}"))
+
         # Desenho da coach sobre o vídeo (correção no quadro pausado).
         if insp.has_table("videocorrection"):
             vc_cols = {c["name"] for c in insp.get_columns("videocorrection")}

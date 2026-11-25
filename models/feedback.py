@@ -58,6 +58,12 @@ class VideoSubmission(SQLModel, table=True):
     # Para o "antes e depois": vídeo novo gravado em cima de uma correção.
     compare_to_id: Optional[int] = Field(default=None, foreign_key="videosubmission.id")
     status: str = Field(default="pendente", index=True)  # pendente | corrigido
+    # Trecho escolhido pelo atleta (segundos). O vídeo inteiro é enviado; o app só toca o trecho.
+    trim_start: Optional[float] = None
+    trim_end: Optional[float] = None
+    # "Vi o vídeo · está tudo certo": corrigido sem nenhuma correção, com recado opcional.
+    all_good: bool = Field(default=False)
+    coach_message: Optional[str] = None
     corrected_at: Optional[datetime] = None
     # Quando o atleta tocou em "Entendi, vou aplicar hoje".
     acknowledged_at: Optional[datetime] = None
