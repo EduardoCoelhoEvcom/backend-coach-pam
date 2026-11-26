@@ -111,6 +111,12 @@ class VideoIn(SQLModel):
     day: Optional[str] = None
     athlete_note: Optional[str] = None
     compare_to_id: Optional[int] = None
+    trim_start: Optional[float] = None
+    trim_end: Optional[float] = None
+
+
+class AllGoodIn(SQLModel):
+    message: Optional[str] = None
 
 
 class CorrectionIn(SQLModel):
@@ -173,6 +179,10 @@ class VideoOut(SQLModel):
     corrected_at: Optional[datetime]
     acknowledged_at: Optional[datetime]
     created_at: datetime
+    trim_start: Optional[float] = None
+    trim_end: Optional[float] = None
+    all_good: bool = False
+    coach_message: Optional[str] = None
     corrections: List[CorrectionOut] = []
 
 
@@ -383,6 +393,11 @@ def athlete_send_video(
         prev = session.get(VideoSubmission, payload.compare_to_id)
         if not prev or prev.athlete_id != athlete.id:
             raise HTTPException(status_code=404, detail="Vídeo anterior não encontrado.")
+    start, end = payload.trim_start, payload.trim_end
+    if start is not None and start < 0:
+        raise HTTPException(status_code=422, detail="O começo do trecho não pode ser negativo.")
+    if start is not None and end is not None and end - start < 0.5:
+        raise HTTPException(status_code=422, detail="O trecho precisa ter pelo menos meio segundo.")
     v = VideoSubmission(
         athlete_id=athlete.id,
         coach_id=athlete.coach_id,
@@ -627,8 +642,38 @@ def coach_send_corrections(
         data["drawing"] = _clean_drawing(data.get("drawing"))
         session.add(VideoCorrection(submission_id=v.id, **data))
     v.status = "corrigido"
+    v.all_good = False
+    v.coach_message = None
     v.corrected_at = _now()
     v.acknowledged_at = None  # correção nova → aparece de novo pro atleta
+    session.add(v)
+    session.commit()
+    session.refresh(v)
+    return _video_out(session, v, athlete.name)
+
+
+@router.post("/coach/videos/{video_id}/all-good", response_model=VideoOut)
+def coach_video_all_good(
+    video_id: int,
+    payload: AllGoodIn,
+    session: Session = Depends(get_session),
+    coach: User = Depends(require_role("coach")),
+):
+    """ "Vi o vídeo · está tudo certo": sai da fila sem correção; o atleta vê o recado."""
+    v = session.get(VideoSubmission, video_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Vídeo não encontrado.")
+    athlete = _owned_athlete(session, coach, v.athlete_id)
+    has_corrections = session.exec(
+        select(VideoCorrection.id).where(VideoCorrection.submission_id == v.id)
+    ).first()
+    if has_corrections:
+        raise HTTPException(status_code=400, detail="Esse vídeo já tem correção.")
+    v.status = "corrigido"
+    v.all_good = True
+    v.coach_message = (payload.message or "").strip()[:500] or None
+    v.corrected_at = _now()
+    v.acknowledged_at = None
     session.add(v)
     session.commit()
     session.refresh(v)
