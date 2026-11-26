@@ -64,6 +64,18 @@ def _ensure_columns() -> None:
                     conn.execute(
                         text('ALTER TABLE "user" ADD COLUMN whatsapp VARCHAR')
                     )
+            # Pagamento: dia do vencimento, mensal/integral e link de cartão.
+            if "due_day" not in user_cols:
+                with engine.begin() as conn:
+                    conn.execute(text('ALTER TABLE "user" ADD COLUMN due_day INTEGER'))
+            if "payment_mode" not in user_cols:
+                with engine.begin() as conn:
+                    conn.execute(text(
+                        "ALTER TABLE \"user\" ADD COLUMN payment_mode VARCHAR NOT NULL DEFAULT 'mensal'"
+                    ))
+            if "payment_link" not in user_cols:
+                with engine.begin() as conn:
+                    conn.execute(text('ALTER TABLE "user" ADD COLUMN payment_link VARCHAR'))
 
         # Status + observação por série (recurso de check-in por série).
         if insp.has_table("trainingsetexecution"):

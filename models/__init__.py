@@ -15,6 +15,7 @@ from .coaching import (
 )
 from .exercise import Exercise, ExerciseCategory, ExerciseType
 from .feedback import AthletePlan, VideoCorrection, VideoSubmission, WeeklyCheckin
+from .payment import CoachPaymentSettings, Payment
 from .refresh_token import RefreshToken
 from .rm_history import AthleteExerciseRMHistory
 from .training import TrainingDayCompletion, TrainingSetExecution, TrainingSheet
@@ -44,4 +45,6 @@ __all__ = [
     "InitialDiagnosis",
     "TrainingGoal",
     "CoachNote",
+    "CoachPaymentSettings",
+    "Payment",
 ]
