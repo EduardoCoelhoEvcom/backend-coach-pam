@@ -27,6 +27,13 @@ class User(SQLModel, table=True):
     must_change_password: bool = Field(default=False)
     # WhatsApp do atleta, como a coach digitou (ex.: "(51) 99876-5432").
     whatsapp: Optional[str] = None
+    # Pagamento. `vencimento` é o próximo pagamento; `due_day` é o dia do mês
+    # combinado com o atleta (vale o plano todo, só muda se ele pedir).
+    due_day: Optional[int] = None
+    # "mensal" (paga todo mês) | "integral" (pagou o plano todo: vencimento = "pago até").
+    payment_mode: str = Field(default="mensal")
+    # Link de cartão só deste atleta (ex.: plano antigo). Se vazio, usa o do plano.
+    payment_link: Optional[str] = None
 
 
 def get_user_by_email(email: str, session: Session) -> Optional[User]:

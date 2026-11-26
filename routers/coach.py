@@ -211,6 +211,7 @@ def create_athlete_for_coach(
         role="athlete",
         status_pagamento="ok",
         vencimento=start + timedelta(days=30),
+        due_day=(start + timedelta(days=30)).day,
         coach_id=current_coach.id,
         must_change_password=True,
         whatsapp=(payload.whatsapp or "").strip() or None,
@@ -240,6 +241,10 @@ class AthleteUpdate(SQLModel):
     email: Optional[EmailStr] = None
     whatsapp: Optional[str] = None
     vencimento: Optional[date] = None
+    # Pagamento: dia do mês combinado, "mensal" | "integral" e link de cartão só dele.
+    due_day: Optional[int] = None
+    payment_mode: Optional[str] = None
+    payment_link: Optional[str] = None
 
 
 class AthleteProfile(SQLModel):
@@ -249,6 +254,9 @@ class AthleteProfile(SQLModel):
     whatsapp: Optional[str] = None
     vencimento: Optional[date] = None
     must_change_password: bool = False
+    due_day: Optional[int] = None
+    payment_mode: str = "mensal"
+    payment_link: Optional[str] = None
 
 
 class AthleteRemove(SQLModel):
@@ -270,6 +278,9 @@ def _profile(a: User) -> AthleteProfile:
         whatsapp=a.whatsapp,
         vencimento=a.vencimento,
         must_change_password=a.must_change_password,
+        due_day=a.due_day,
+        payment_mode=a.payment_mode or "mensal",
+        payment_link=a.payment_link,
     )
 
 
@@ -310,6 +321,22 @@ def update_athlete(
         athlete.whatsapp = (payload.whatsapp or "").strip() or None
     if "vencimento" in sent:
         athlete.vencimento = payload.vencimento
+        # A data nova define o dia combinado, a não ser que o dia venha junto.
+        if payload.vencimento and "due_day" not in sent:
+            athlete.due_day = payload.vencimento.day
+    if "due_day" in sent:
+        if payload.due_day is not None and not 1 <= payload.due_day <= 31:
+            raise HTTPException(status_code=422, detail="O dia do vencimento vai de 1 a 31.")
+        athlete.due_day = payload.due_day
+    if "payment_mode" in sent:
+        if payload.payment_mode not in ("mensal", "integral"):
+            raise HTTPException(status_code=422, detail="Forma de pagamento inválida.")
+        athlete.payment_mode = payload.payment_mode
+    if "payment_link" in sent:
+        link = (payload.payment_link or "").strip()
+        if link and not link.startswith("http"):
+            raise HTTPException(status_code=422, detail="O link do cartão precisa começar com https://")
+        athlete.payment_link = link or None
     session.add(athlete)
     session.commit()
     session.refresh(athlete)
